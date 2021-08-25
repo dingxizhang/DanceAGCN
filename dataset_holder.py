@@ -1,7 +1,9 @@
 import ctypes
 import multiprocessing as mp
 import numpy as np
-
+import sys
+sys.path.append('/home/dingxi/DanceRevolution')
+sys.path.append('/home/dingxi/DanceRevolution/v2')
 from bezier import BezierFitter
 from skeleton_sequence import SkeletonSequence
 from skeleton_structure import DanceRevolutionStructure
@@ -89,4 +91,5 @@ class DanceRevolutionHolder:
 
 if __name__ == '__main__':
     # train_holder = DanceRevolutionHolder('/home/davide/data/datasets/dance_revolution/data/train_1min', 'train')
-    test_holder = DanceRevolutionHolder('/home/davide/data/datasets/dance_revolution/data/test_1min', 'test')
+    # test_holder = DanceRevolutionHolder('/home/davide/data/datasets/dance_revolution/data/test_1min', 'test')
+    train_holder = DanceRevolutionHolder('/home/dingxi/DanceRevolution/data/train_1min', 'train')

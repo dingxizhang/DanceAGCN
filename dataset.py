@@ -33,7 +33,7 @@ class DanceDataset(torch.utils.data.Dataset):
 
 
 class DanceRevolutionDataset(DanceDataset):
-    def __init__(self, holder, data_in, bez_degree=None):
+    def __init__(self, holder, data_in='raw', bez_degree=None):
         super().__init__(holder, data_in, bez_degree=bez_degree)
 
     def get_music_skel_seq(self, item):

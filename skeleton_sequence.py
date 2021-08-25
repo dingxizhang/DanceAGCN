@@ -9,8 +9,8 @@ from pathlib import Path
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 from bezier import BezierFitter, plot_bezier_curve
-# from plots import create_3d_figure, squeeze_subplots, remove_ticks_and_labels, scale_3d_axis, set_3d_axis_limits, \
-#     set_2d_axis_limits
+from plots import create_3d_figure, squeeze_subplots, remove_ticks_and_labels, scale_3d_axis, set_3d_axis_limits, \
+    set_2d_axis_limits
 
 
 # DM: some tiny plotting bits were adapted from
