@@ -404,12 +404,13 @@ def animate_skeleton_with_bezier(skel_seq, node, bezier, control_points, fitted_
 
 def test_dance_revolution():
     from dataset_holder import DanceRevolutionHolder
-    test_holder = DanceRevolutionHolder('../data/datasets/dance_revolution/data/test_1min', 'test')
+    test_holder = DanceRevolutionHolder('/home/dingxi/DanceRevolution/data/test_1min', 'test')
     seq = test_holder.skeletons[0]
 
     # the function below will smooth the sequence using a Bezier curve of degree 5, sliding a window of width 30 and
     # overlap 5. Target length controls the length of the sequence to generate
     b, cp = seq.get_bezier_skeleton(order=5, body=0, window=30, overlap=5, target_length=1000)
+    return b
     # b contains the sequence, cp contains the control points
 
 

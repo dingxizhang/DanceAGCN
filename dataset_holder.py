@@ -1,23 +1,30 @@
 import ctypes
 import multiprocessing as mp
 import numpy as np
+import os
 import sys
+import json
 sys.path.append('/home/dingxi/DanceRevolution')
 sys.path.append('/home/dingxi/DanceRevolution/v2')
 from bezier import BezierFitter
 from skeleton_sequence import SkeletonSequence
 from skeleton_structure import DanceRevolutionStructure
-from utils.functional import load_data, load_test_data  # DM these are functions from dance revolution code
+# from utils.functional import load_data, load_test_data  # DM these are functions from dance revolution code
 
 
 class DanceRevolutionHolder:
-    def __init__(self, data_path, split, train_interval=900, music_feat_dim=438):
+    def __init__(self, data_path, split, file_list=None, train_interval=900, music_feat_dim=438):
         assert split in ('train', 'test'), 'Split must be either `train` or `test`'
+        
+        if file_list is None:
+            file_list = sorted(os.listdir(data_path))
 
-        if split == 'train':
-            music, dance, self.filenames = load_data(data_path, interval=train_interval, return_fnames=True)
-        else:
-            music, dance, self.filenames = load_test_data(data_path)  # TODO you should have your own train/test splits
+        music, dance, self.filenames = self.load_data(file_list, data_path, split, interval=train_interval, return_fnames=True)
+        
+        # if split == 'train':
+        #     music, dance, self.filenames = load_data(file_list, data_path, 'train', interval=train_interval, return_fnames=True)
+        # else:
+        #     music, dance, self.filenames = load_test_data(file_list, data_path)  # TODO you should have your own train/test splits
 
         assert len(music) == len(dance), 'music/dance sequence mismatch'
 
@@ -56,6 +63,7 @@ class DanceRevolutionHolder:
             self.music_array[i] = m.T
 
             # important! pass the i-th dance array element in order to correctly share the data instead of s here
+            # DX: Each sequence of dance data with its label are stored as a SkeletonSequence class in self.skeletons list
             skel_seq = SkeletonSequence(data=self.dance_array[i], skel_structure=self.skeleton_structure,
                                         metadata=self.metadata[i], is_2d=True, cache=False, fitter=self.bezier_fitter)
 
@@ -88,6 +96,42 @@ class DanceRevolutionHolder:
 
         return x
 
+    def load_data(self, file_list, data_dir, split, interval=100, data_type='2D', return_fnames=False):
+    # DX: Given a file_list and data_dir, output two lists music_data (contains music features) 
+    # and dance_data (contains skeleton sequences with fixed interval)
+
+        music_data, dance_data = [], []
+        fnames = file_list
+        # fnames = fnames[:10]  # For debug
+        for fname in fnames:
+            path = os.path.join(data_dir, fname)
+            with open(path) as f:
+                sample_dict = json.loads(f.read())
+                np_music = np.array(sample_dict['music_array'])
+                np_dance = np.array(sample_dict['dance_array'])
+                if data_type == '2D':
+                    # Only use 25 keypoints skeleton (basic bone) for 2D
+                    np_dance = np_dance[:, :50]
+                    root = np_dance[:, 2*8:2*9]
+                    np_dance = np_dance - np.tile(root, (1, 25))
+                    np_dance[:, 2*8:2*9] = root
+
+                if split == 'train':
+                    seq_len, dim = np_music.shape
+                    for i in range(0, seq_len, interval):
+                        music_sub_seq = np_music[i: i + interval]
+                        dance_sub_seq = np_dance[i: i + interval]
+                        if len(music_sub_seq) == interval:
+                            music_data.append(music_sub_seq)
+                            dance_data.append(dance_sub_seq)
+                elif split == 'test':
+                    music_data.append(np_music)
+                    dance_data.append(np_dance)
+
+        if return_fnames:
+            return music_data, dance_data, fnames
+        else:
+            return music_data, dance_data
 
 if __name__ == '__main__':
     # train_holder = DanceRevolutionHolder('/home/davide/data/datasets/dance_revolution/data/train_1min', 'train')

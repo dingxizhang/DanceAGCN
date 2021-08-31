@@ -28,6 +28,9 @@ class DanceDataset(torch.utils.data.Dataset):
             return skel_sequence.get_raw_data(as_is=True)
         elif self.data_in == 'raw+bcurve':
             return skel_sequence.get_raw_plus_bcurve_data(self.bez_degree, padding_size=self.holder.seq_length)
+        elif self.data_in == 'bcurve':
+            b, _ = skel_sequence.get_bezier_skeleton(order=self.bez_degree, body=0, window=30, overlap=5, target_length=900)
+            return b.astype('<f4')
         else:
             raise ValueError(f'Cannot deal with this data input: {self.data_in}')
 
