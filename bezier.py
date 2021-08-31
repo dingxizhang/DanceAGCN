@@ -2,10 +2,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from scipy.special import comb as n_over_k
-# from plots import squeeze_subplots
+from sklearn.neighbors import LocalOutlierFactor
 
-
+from plots import squeeze_subplots
 # DM: the fitting algorithm was adapted from https://stackoverflow.com/a/62225617
+from utils import get_box_from_keypoints, normalise_keypoints_
+
 
 class BezierFitter:
     def __init__(self):
@@ -67,6 +69,93 @@ class BezierFitter:
             m_ = np.linalg.pinv(m)
             return np.matmul(m_, points, out=out)
 
+    @staticmethod
+    def casteljau(control_points, t, return_all_points=False):
+        n = control_points.shape[0]
+        q = np.array(control_points)
+        r = []
+
+        for k in range(1, n):
+            for i in range(0, n - k):
+                q[i] = (1 - t) * q[i] + t * q[i + 1]
+
+            qq = np.array(q[:-k])
+
+            if return_all_points:
+                r.append(qq)
+            else:
+                r = qq
+
+        return r
+
+    @staticmethod
+    def casteljau_torch(control_points, t, return_all_points=False):
+        n = control_points.shape[-2]  # De Casteljau's algorithm
+        q = control_points.clone()  # yes, with grad history
+        r = []
+
+        for k in range(1, n):
+            for i in range(0, n - k):
+                q[..., i, :] = (1 - t) * q[..., i, :] + t * q[..., i + 1, :]
+
+            qq = q[..., :-k, :]  # I guess we don't need clone here for autograd
+
+            if return_all_points:
+                r.append(qq)
+            else:
+                r = qq
+
+        return r
+
+    @staticmethod
+    def generate_bezier_curve_with_casteljau(control_points, t_points, pytorch=False):
+        if pytorch:
+            return torch.cat([BezierFitter.casteljau_torch(control_points, t, return_all_points=False)
+                              for t in t_points])
+        else:
+            return np.concatenate([BezierFitter.casteljau(control_points, t, return_all_points=False)
+                                   for t in t_points])
+
+    @staticmethod
+    def get_intermediate_points_series(control_points, t, points_axis=0, cp_axis=2, cython=True, zero_if_no_cp=True):
+        """
+        Expects array of shape (nodes, channels, order+1)
+        Returns array of shape (nodes, get_n_intermediate_points * channels)
+        """
+        assert points_axis == 0 and cp_axis == 2 and control_points.ndim == 3, \
+            'This function expects control_points to be in shape (nodes, channels, order+1)'
+        assert cython, 'Use cython mode'
+
+        if not control_points.any():
+            if zero_if_no_cp:
+                nodes, channels, order_p1 = control_points.shape
+                return np.zeros(nodes, channels * BezierFitter.get_n_intermediate_points(order_p1 - 1))
+            else:
+                raise RuntimeError('Empty control points')
+
+        l = control_points.shape[points_axis]
+
+        if cython:
+            try:
+                from casteljau import casteljau_all_nodes
+                return casteljau_all_nodes(control_points, t)
+            except ImportError:
+                print('Compile cython module to run Casteljau')
+                return
+        else:
+            return np.stack([np.concatenate(BezierFitter.casteljau(control_points[i, :, :].T, t))
+                             for i in range(l)])
+
+    @staticmethod
+    def get_n_intermediate_points(order):
+        n = order + 1
+        i = 0
+
+        for k in range(1, n - 1):
+            i += n - k
+
+        return i
+
     def get_bernstein_matrix(self, t, degree, swap=False, device=None, pytorch=False):
         # this creates a bezier curve with the given degree
         k = f'{degree}_{len(t)}_swap={swap}_pytorch={pytorch}'
@@ -123,6 +212,30 @@ class BezierFitter:
 
         return p
 
+    def fit_bezier(self, points, degree=3, pytorch=False, device=None, out=None):
+        """ Least square Bezier fit using penrose pseudo-inverse.
+
+        Parameters:
+
+        points: a nxd array o n d-dimensional points
+        degree: degree of the Bézier curve. 2 for quadratic, 3 for cubic.
+
+        Based on https://stackoverflow.com/questions/12643079/b%C3%A9zier-curve-fitting-with-scipy
+        and probably on the 1998 thesis by Tim Andrew Pastva, "Bézier Curve Fitting".
+        """
+        n_points = len(points)
+        assert degree >= 1, 'degree must be greater.'
+        assert n_points >= degree + 1, f'There must be at least {degree + 1} points to determine the parameters of a ' \
+                                       f'degree {degree} curve. Got only {n_points} points.'
+
+        t = self.get_points(n_points, device, pytorch)
+        m = self.get_bernstein_matrix(t, degree, device, pytorch)
+
+        # we minimise the error between the given points and the curve
+        control_points = BezierFitter.least_square_fit(points, m, pytorch=pytorch, out=out)
+
+        return control_points
+
     def fit_bezier_series(self, points_matrix, degree=3, time_axis=1, nodes_axis=2, dtype=np.float32,
                           zero_if_not_enough_points=True):
         """
@@ -152,43 +265,65 @@ class BezierFitter:
         return cp
 
     def fit_bezier_series_with_windows(self, points_matrix, degree, window, overlap, time_axis=1, nodes_axis=2,
-                                       inter_points=None, target_length=None):
+                                       inter_points=None, target_length=None, outliers_neigh=None,
+                                       save_idx=None, frames_list=None, bounds=None):
         """
         Expects array of shape (channels, frames, nodes)
         This function returns both the control points and the joint curve. See other functions for the output shapes
         """
         trajectory_length = points_matrix.shape[time_axis]
+        assert trajectory_length == len(frames_list), f'Trajectory length {target_length} did not match frames list ' \
+                                                      f'length {len(frames_list)}'
+        assert 0 <= overlap <= 1 or overlap % 2 == 0, 'Overlap must be either 0, 1 or multiple of 2'
+
         assert degree >= 1, 'degree must be greater than 1'
         assert time_axis == 1 and nodes_axis == 2 and points_matrix.ndim == 3, \
             'This function expects points_matrix to be in shape (channels, frames, nodes)'
-        assert not (inter_points is not None and target_length is not None), \
-            'Specify target_length or interpolation_points, but not both'
+
+        assert target_length is None and inter_points is None and frames_list is not None and bounds is not None, \
+            'Review this to work with target length or interpolation points'
 
         if trajectory_length < degree + 1:
             raise RuntimeError(f'There must be at least {degree + 1} points to determine the parameters of a '
                                f'degree {degree} curve. Got only {trajectory_length} points.')
 
         windows = self.get_windows(window, overlap, trajectory_length)
-        t_overlap = self.get_overlap_t_points(overlap)
+        t_overlap = self.get_overlap_t_points(overlap) if overlap > 0 else 0
         n_windows = len(windows)
         cps = []
         gs = []
+        outliers_all = []
 
-        if inter_points is None:
-            inter_points = int(np.floor(target_length / n_windows))
-
-        last_window_points = None
+        # last_window_points = None
+        save_idx = [] if save_idx is None else save_idx
 
         for i, idx in enumerate(windows):
             if i == n_windows - 1 and idx[-1] != trajectory_length - 1:
                 idx = np.arange(idx[0], trajectory_length, 1)
-                last_window_points = target_length - (i * inter_points)
+                # last_window_points = target_length - (i * inter_points)
+
+            if outliers_neigh is not None:
+                outliers = BezierFitter.find_outliers(points_matrix, idx, save_idx, outliers_neigh)
+                idx = [k for k in idx if k not in outliers]
+
+                for o in outliers:
+                    if o not in outliers_all:
+                        outliers_all.append(o)
 
             points_in_windows = points_matrix[:, idx, :]
             cp = self.fit_bezier_series(points_in_windows, degree=degree, time_axis=time_axis, nodes_axis=nodes_axis)
             cps.append(cp)
 
-            n_points = last_window_points if i == n_windows - 1 and last_window_points is not None else inter_points
+            if i == 0:
+                n_points = frames_list[idx[-1]] - bounds[0] + 1
+            elif i < n_windows - 1:
+                n_points = frames_list[idx[-1]] - frames_list[idx[0]] + 1
+            else:
+                n_points = bounds[1] - frames_list[idx[0]] + 1
+
+            # n_points += overlap  # don't do this or the sequence will be misaligned with the video
+
+            # n_points = last_window_points if i == n_windows - 1 and last_window_points is not None else inter_points
             g = self.get_bezier_curves(cp, degree=degree, inter_points=n_points)
             gs.append(g)
 
@@ -203,27 +338,51 @@ class BezierFitter:
             for i in range(n_splits - 1):
                 a = gs[i]  # we are concatenating the unique bits of a and the midpoint in the overlapping area
                 b = gs[i + 1]
+
                 start_a = overlap if i > 0 else 0
                 # end_a = window - overlap
                 end_a = -overlap
                 start_b = overlap
                 aa = a[:, :, start_a:end_a]
-                oo = (1 - t_overlap) * a[:, :, end_a:] + t_overlap * b[:, :, :start_b]
 
-                segs_o.extend([aa, oo])
+                if overlap > 0:
+                    oo = (1 - t_overlap) * a[:, :, end_a:] + t_overlap * b[:, :, :start_b]
+                    segs_o.extend([aa, oo])
+                else:
+                    segs_o.extend([aa])
 
                 if i == n_splits - 2:
                     bb = b[:, :, start_b:]  # finally, we add the last segment
                     segs_o.append(bb)
 
         final_curve = np.concatenate(segs_o, axis=2)
+        expected_length = bounds[1] - bounds[0] + 1
+        resampling = np.linspace(0, final_curve.shape[2] - 1, expected_length, dtype=np.int32)
+        final_curve = final_curve[:, :, resampling]
 
-        if target_length is not None and final_curve.shape[2] != target_length:
-            # happens when target_length is not a multiple of n_windows. In this case we oversample
-            oversampling = np.linspace(0, final_curve.shape[2] - 1, target_length, dtype=np.int32)
-            final_curve = final_curve[:, :, oversampling]
+        outliers_all = sorted(outliers_all)
 
-        return final_curve, gs, cps
+        return final_curve, gs, cps, outliers_all
+
+    @staticmethod
+    def find_outliers(points_matrix, idx, save_idx, outliers_neigh, normalise_kpt=True):
+        if normalise_kpt:
+            temp = []  # shape of points_matrix is CTV
+            for i in idx:
+                keypoints_t = points_matrix[:, i, :].T  # transpose to reuse methods below
+                box = get_box_from_keypoints(keypoints_t, box_border=0)
+                keypoints_t = normalise_keypoints_(box, keypoints_t)
+                temp.append(keypoints_t.T)
+
+            xy = np.stack(temp, axis=1)
+        else:
+            xy = points_matrix[:, idx, :]
+
+        xy = xy.transpose(1, 2, 0).reshape(-1, xy.shape[0] * xy.shape[2])
+        outliers = LocalOutlierFactor(n_neighbors=outliers_neigh).fit_predict(xy)
+        outliers = [idx[j] for j, o in enumerate(outliers) if o == -1 and idx[j] not in save_idx]
+
+        return outliers
 
     def get_bezier_curves(self, control_points, degree, inter_points=100, points_axis=0, dtype=np.float32,
                           zero_if_no_cp=True):
@@ -404,15 +563,35 @@ def animate_skeleton_with_bezier(skel_seq, node, bezier, control_points, fitted_
 
 def test_dance_revolution():
     from dataset_holder import DanceRevolutionHolder
-    test_holder = DanceRevolutionHolder('/home/dingxi/DanceRevolution/data/test_1min', 'test')
+    test_holder = DanceRevolutionHolder('../data/datasets/dance_revolution/data/test_1min', 'test')
     seq = test_holder.skeletons[0]
-
-    # the function below will smooth the sequence using a Bezier curve of degree 5, sliding a window of width 30 and
-    # overlap 5. Target length controls the length of the sequence to generate
     b, cp = seq.get_bezier_skeleton(order=5, body=0, window=30, overlap=5, target_length=1000)
-    return b
-    # b contains the sequence, cp contains the control points
 
 
 if __name__ == '__main__':
     test_dance_revolution()
+
+    # fitter = BezierFitter()
+    # w1 = fitter.get_windows(60, 20, 300)
+    # w2 = fitter.get_windows(60, 20, 300)
+    # assert w1 is w2
+    #
+    # p1 = fitter.get_overlap_t_points(20)
+    # p2 = fitter.get_overlap_t_points(20)
+    # assert p1 is p2
+
+    # array = np.array([[0.33708757, 0.01906767, 2.3141942],
+    #                   [0.32358646, 0.02714227, 2.3365653],
+    #                   [0.32358646, 0.02714227, 2.3365653],
+    #                   [0.32358646, 0.02714227, 2.3365653],
+    #                   [0.38208422, -0.02421005, 2.348139],
+    #                   [0.35249406, 0.07259154, 2.3852396]], dtype=np.float32).copy(order='F')
+    #
+    # degree = 4
+    # t = 0.7
+    # fitter = BezierFitter()
+    # cp = fitter.fit_bezier(array, degree)
+    # b_poly = np.array([BezierFitter.bernstein_poly(degree, t, k, pytorch=False) for k in range(degree + 1)])
+    # icp = BezierFitter.casteljau(cp, t)
+    #
+    # print(np.isclose(icp[-1], b_poly @ cp))

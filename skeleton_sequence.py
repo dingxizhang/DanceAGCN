@@ -43,7 +43,7 @@ def auto_padding(data_numpy, size, random_pad=False, begin=None, return_index=Fa
 class SkeletonSequence:
     def __init__(self, data, skel_structure=None, metadata=None, cache=True, filter_zeros_when_fitting=False,
                  cp_cache=None, bcurve_cache=None, cache_flags=None, empty_mask_cache=None, actual_frames_cache=None,
-                 actual_frames_cached=False, empty_mask_cached=False, is_2d=False, fitter=None):
+                 actual_frames_cached=False, empty_mask_cached=False, is_2d=False, fitter=None, ax_limits=None):
         # IMPORTANT when this object is used for training/testing, none of the below variables will be permanent, as
         # the data loader creates and destroy objects on the fly. Rely on the cache objects passed in to make what's
         # needed permanent
@@ -74,6 +74,7 @@ class SkeletonSequence:
         self.actual_frames_cached = actual_frames_cached
         self.empty_mask_cached = empty_mask_cached
         self._data_loaded()
+        self.ax_limits = ax_limits
 
     def new_data_filter_empty(self, node_tolerance=1):
         bof = np.array([[not SkeletonSequence.is_empty(self._data[:, f, :, b], node_tolerance=node_tolerance)
@@ -458,7 +459,8 @@ class SkeletonSequence:
         self._cache_flags[body] = True
 
     def get_bezier_skeleton(self, order, body, normalise=False, dtype=np.float32, interpolation_points=None,
-                            window=None, overlap=None, target_length=None):
+                            window=None, overlap=None, target_length=None, outliers_neigh=None,
+                            save_idx=None, frames_list=None, bounds=None):
 
         if window is not None and overlap is not None:
             assert not self.cache, 'Review windows with caching'
@@ -470,17 +472,20 @@ class SkeletonSequence:
         # Cache contains fixed-bezier-order stuff. Specifically, contains the bezier curve with interpolation points
         # equal to the action's length, as well as the corresponding control points
         cached = self._get_bdata_from_cache(body, order, interpolation_points=interpolation_points)
+        outliers = None
 
         if self.cache and cached is not None:
-            return cached[0], cached[1]
+            return cached[0], cached[1], outliers
         else:
-            b, cp = self.to_bezier(order, body, normalise=normalise, dtype=dtype, target_length=target_length,
-                                   interpolation_points=interpolation_points, window=window, overlap=overlap)
+            b, cp, outliers = self.to_bezier(order, body, normalise=normalise, dtype=dtype, target_length=target_length,
+                                             interpolation_points=interpolation_points, window=window, overlap=overlap,
+                                             outliers_neigh=outliers_neigh, save_idx=save_idx, frames_list=frames_list,
+                                             bounds=bounds)
 
             if self.cache and order == self._cached_degree:
                 self._set_bdata_in_cache(b, cp, body, interpolation_points=interpolation_points)
 
-            return b, cp
+            return b, cp, outliers
 
     def to_bezier_depr(self, order, body, normalise=False, dtype=np.float32, dtype_pt=torch.float32, pytorch=False,
                        device=None, with_control_points=False):
@@ -506,10 +511,12 @@ class SkeletonSequence:
         return b, cp
 
     def to_bezier(self, order, body, normalise=False, dtype=np.float32, interpolation_points=None, window=None,
-                  overlap=None, target_length=None):
+                  overlap=None, target_length=None, outliers_neigh=None, save_idx=None, frames_list=None,
+                  bounds=None):
         assert not (interpolation_points is not None and target_length is not None), \
             'Specify target_length or interpolation_points, but not both'
         nodes = self.get_nodes(body, frame='all_actual', normalise=normalise)
+        outliers = None
 
         if self.is_2d:
             to_fit = nodes[0:2, ...]
@@ -518,10 +525,21 @@ class SkeletonSequence:
             to_fit = nodes
             confidence_score = None
 
+        if outliers_neigh is not None and save_idx is not None:
+            assert window is not None and overlap is not None, 'Review outlier detection for non windowed method'
+
+        if frames_list is not None:
+            assert bounds is not None, 'Need to provide sequence bounds if providing frames'
+            assert target_length is None, 'Either specify frame bounds or target length'
+            assert window is not None and overlap is not None, 'Review outlier detection for non windowed method'
+
         if window is not None and overlap is not None:
-            b, _, cp = self.fitter.fit_bezier_series_with_windows(to_fit, order, window, overlap,
-                                                                  target_length=target_length,
-                                                                  inter_points=interpolation_points)
+            b, _, cp, outliers = self.fitter.fit_bezier_series_with_windows(to_fit, order, window, overlap,
+                                                                            target_length=target_length,
+                                                                            inter_points=interpolation_points,
+                                                                            outliers_neigh=outliers_neigh,
+                                                                            save_idx=save_idx, frames_list=frames_list,
+                                                                            bounds=bounds)
         else:
             n_frames = nodes.shape[1]
             interpolation_points = n_frames if interpolation_points is None else interpolation_points
@@ -534,7 +552,7 @@ class SkeletonSequence:
             # this will be fed to the model, so we still need to put the confidence score as done with the raw data
             b = np.concatenate([b, np.expand_dims(confidence_score, (0, 3))], axis=0)
 
-        return b, cp
+        return b, cp, outliers
 
     def to_b_inter_points(self, order, body, normalise=False, dtype=np.float32, interpolation_points=None, cython=True):
         assert not self.is_2d, 'Review this for the 2d case'
@@ -675,6 +693,9 @@ class SkeletonSequence:
         else:
             xyz = xyz[:, frame, :, body].T
 
+        if ax_limits is None:
+            ax_limits = self.ax_limits
+
         if ax is None:
             if self.is_2d:
                 if frame_w_px is not None and frame_h_px is not None:
@@ -694,7 +715,7 @@ class SkeletonSequence:
                       highlight_node=highlight_node, plot_only_highlighted=plot_only_highlighted,
                       joint_size=joint_size, flip_z=flip_z)
 
-        if plot_title and self.metadata:
+        if plot_title and self.metadata and 'label_str' in self.metadata:
             ax.set_title(self.metadata['label_str'])
 
     def get_skeleton(self, frame, body=0):
@@ -835,6 +856,9 @@ class SkeletonSequence:
         fig = plt.figure(dpi=dpi) if figsize is None else plt.figure(figsize=figsize)
         axes = []
 
+        if ax_limits is None:
+            ax_limits = self.ax_limits
+
         def set_ax_lims(ax):
             if ax_limits is not None and self.is_2d:
                 ax.set_xlim(left=ax_limits[0], right=ax_limits[1])
@@ -875,7 +899,7 @@ class SkeletonSequence:
 
         rotations = [init_view_h] if views == 1 else np.linspace(init_view_h, -2*init_view_h, views)
 
-        if self.metadata:
+        if self.metadata and 'label_str' in self.metadata:
             fig.suptitle(self.metadata['label_str'])
 
         def make_frame(t):
@@ -1174,7 +1198,8 @@ class SkeletonSequence:
         return norm_xyz
 
     def plot_xyz(self, xyz, normalise=False, init_view_h=45, init_view_v=20, ax=None, highlight_node=None,
-                 plot_only_highlighted=False, set_axis_lim=True, joint_size=2, flip_z=False, zdir='z'):
+                 plot_only_highlighted=False, set_axis_lim=True, joint_size=2, flip_z=False, zdir='z',
+                 invert_2d_ax=False):
         if ax is None:
             if self.is_2d:
                 fig, ax = plt.subplots(nrows=1, ncols=1, dpi=150)
@@ -1246,7 +1271,7 @@ class SkeletonSequence:
         if flip_z and not self.is_2d:
             ax.invert_zaxis()
 
-        if self.is_2d:
+        if self.is_2d and invert_2d_ax:
             ax.invert_yaxis()
 
     @staticmethod
