@@ -6,7 +6,7 @@ from sklearn.neighbors import LocalOutlierFactor
 
 from plots import squeeze_subplots
 # DM: the fitting algorithm was adapted from https://stackoverflow.com/a/62225617
-from utils import get_box_from_keypoints, normalise_keypoints_
+# from utils import get_box_from_keypoints, normalise_keypoints_
 
 
 class BezierFitter:

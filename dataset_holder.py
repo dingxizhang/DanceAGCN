@@ -28,6 +28,7 @@ class DanceRevolutionHolder:
 
         assert len(music) == len(dance), 'music/dance sequence mismatch'
 
+        self.data_path = data_path
         self.split = split
         self.train_interval = train_interval
         self.n_samples = len(music)
@@ -57,6 +58,8 @@ class DanceRevolutionHolder:
         self.metadata = [self.get_metadata_from_filename(fn, i) for i, fn in enumerate(self.filenames)]
 
         for i, (m, d) in enumerate(zip(music, dance)):
+            # DX:
+            # assert d.shape[0] == self.seq_length, 'Sequence length mismatch'
             assert m.shape[0] == self.seq_length and d.shape[0] == self.seq_length, 'Sequence length mismatch'
             s = self.parse_dance_sequence(d)
             self.dance_array[i] = s
@@ -111,6 +114,8 @@ class DanceRevolutionHolder:
                 np_dance = np.array(sample_dict['dance_array'])
                 if data_type == '2D':
                     # Only use 25 keypoints skeleton (basic bone) for 2D
+                    # Only 'pose_keypoints_2d' is used, others including 'face_keypoints_2d', 'hand_left_keypoints_2d'
+                    # and 'hand_right_keypoints_2d' are discarded
                     np_dance = np_dance[:, :50]
                     root = np_dance[:, 2*8:2*9]
                     np_dance = np_dance - np.tile(root, (1, 25))

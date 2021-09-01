@@ -225,11 +225,11 @@ def main():
     """ Main function """
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--train_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_linear_inter', 
+    parser.add_argument('--train_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_discarded/bcurve', 
                         help='the directory of training data')
-    parser.add_argument('--test_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_linear_inter',
+    parser.add_argument('--test_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_discarded/bcurve',
                         help='the directory of testing data')
-    parser.add_argument('--data_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_linear_inter',
+    parser.add_argument('--data_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_discarded/bcurve',
                         help='the directory of all data')
     parser.add_argument('--output_dir', metavar='PATH', default='checkpoints')
 

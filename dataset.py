@@ -1,7 +1,7 @@
 import torch
+import numpy as np
 
 from skeleton_sequence import SkeletonSequence
-
 
 class DanceDataset(torch.utils.data.Dataset):
     def __init__(self, holder, data_in='raw', bez_degree=None):
@@ -29,7 +29,11 @@ class DanceDataset(torch.utils.data.Dataset):
         elif self.data_in == 'raw+bcurve':
             return skel_sequence.get_raw_plus_bcurve_data(self.bez_degree, padding_size=self.holder.seq_length)
         elif self.data_in == 'bcurve':
-            b, _ = skel_sequence.get_bezier_skeleton(order=self.bez_degree, body=0, window=30, overlap=5, target_length=900)
+            frames_list_path = skel_sequence.metadata['filename'].replace('.json', '.npy')
+            frames_list = np.load(self.holder.data_path.rsplit('/', 1)[0]+ '/frames_list/' + frames_list_path)
+            frames_list = frames_list.tolist()
+            b, _ = skel_sequence.get_bezier_skeleton(order=self.bez_degree, body=0, window=30, overlap=5, target_length=900,
+                                                    frames_list=frames_list, bounds=(0,899))
             return b.astype('<f4')
         else:
             raise ValueError(f'Cannot deal with this data input: {self.data_in}')
