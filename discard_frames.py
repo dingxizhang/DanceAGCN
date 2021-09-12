@@ -5,10 +5,15 @@ import argparse
 import numpy as np
 from tqdm.auto import tqdm
 
+# input_dir is the folder containing preprocessed original json files, which is used to generate frames discarded json files for bcurve
+# json_dir is the folder containing raw json files which is used to generate frames discarded raw json files for linear interpolation
+# output_dir is the output folder
+# For bcurve, run discard_frames.py -> Done
+# For linear, run discard_frames.py -> interpolate_missing_keypoints.py -> myprepro.py -> Done
 parser = argparse.ArgumentParser()
-parser.add_argument('--input_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min')
+parser.add_argument('--input_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_notwins')
 parser.add_argument('--json_dir', type=str, default='/home/dingxi/DanceRevolution/data/json')
-parser.add_argument('--output_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_discarded')
+parser.add_argument('--output_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_05discard_notwins')
 parser.add_argument('--discard_ratio', type=float, default=0.5)
 args = parser.parse_args()
 
@@ -88,9 +93,6 @@ def discard_frames_linear(sequence, frames_list, args):
         with open(os.path.join(dump_path, json_file), 'w') as f:
             json.dump(linear_dict, f)
         
-        
-
-
 if __name__ == '__main__':
     sequences = os.listdir(args.input_dir)
     for sequence in tqdm(sequences):

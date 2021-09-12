@@ -17,6 +17,7 @@ from agcn.graph.dance_revolution import DanceRevolutionGraph
 from agcn.model.aagcn import Model
 from dataset_holder import DanceRevolutionHolder
 from dataset import DanceRevolutionDataset
+import pandas as pd
 
 
 def new_aagcn(num_classes=3):
@@ -45,10 +46,10 @@ def run_batch(input_tensor, model):
 #  Look at attached notebook to understand Dance Revolution dance format. Look also at dataset_holder.py to see how
 #  data can be loaded first and then fed via a Dataset object. I'm including a stub object in dataset.py for your
 #  reference
-def kfold_split(data_dir, n_splits=5, shuffle=False):
+def kfold_split(data_dir, n_splits=5, shuffle=True):
     fnames = sorted(os.listdir(data_dir))
     if shuffle:
-        random.shuffle(fnames)
+        random.Random(4).shuffle(fnames)
     num_per_split = int(len(fnames)/n_splits)
     print('total number:', len(fnames), 'num per split:', num_per_split)
     for i in range(n_splits):
@@ -62,22 +63,22 @@ def load_data(file_list, split, args):
     # Dataloader loads data from Dataset and output requested sequences
     print('{} data loading'.format(split))
     if split == 'train':
-        holder = DanceRevolutionHolder(args.train_dir, split, file_list)
+        holder = DanceRevolutionHolder(args.train_dir, split, file_list, train_interval=1800)
         if args.use_bezier:
-            dataset = DanceRevolutionDataset(holder, 'bcurve', bez_degree=5)
+            dataset = DanceRevolutionDataset(holder, 'bcurve+gaussian', bez_degree=5)
         else:
-            dataset = DanceRevolutionDataset(holder)
+            dataset = DanceRevolutionDataset(holder, 'raw+gaussian')
         loader = DataLoader(dataset,
                             batch_size=args.batch_size,
                             shuffle=True,
                             num_workers=args.num_worker,
                             drop_last=True)
     elif split == 'test':
-        holder = DanceRevolutionHolder(args.test_dir, split, file_list)
+        holder = DanceRevolutionHolder(args.test_dir, split, file_list, train_interval=1800)
         if args.use_bezier:
-            dataset = DanceRevolutionDataset(holder, 'bcurve', bez_degree=5)
+            dataset = DanceRevolutionDataset(holder, 'bcurve+gaussian', bez_degree=5)
         else:
-            dataset = DanceRevolutionDataset(holder)
+            dataset = DanceRevolutionDataset(holder, 'raw+gaussian')
         loader = DataLoader(dataset,
                             batch_size=args.batch_size,
                             shuffle=True,
@@ -108,6 +109,32 @@ def load_optimizer(opt_name, params, base_lr):
 def get_accuracy(output, label):
     value, predict_label = torch.max(output.data, 1)
     return torch.mean((predict_label == label.data).float()).item()
+
+def get_evaluation_reports(preds, gts):
+    labels_str_to_int = {'ballet': 0, 'hiphop': 1, 'pop': 2}
+    labels_int_to_str = {v: k for k, v in labels_str_to_int.items()}
+    
+    reports = []
+    for i in range(3):
+        # style name, TP, FP, FN, support
+        item = [labels_int_to_str[i]] + [0]*4
+        reports.append(item)
+    
+    for i, pred in enumerate(preds):
+        gt = gts[i]
+        reports[gt][4] += 1
+        if pred == gt:
+            reports[gt][1] += 1
+        elif pred != gt:
+            reports[gt][3] += 1
+            reports[pred][2] += 1
+    
+    cols = ['style', 'TP', 'FP', 'FN', 'support']
+    print(reports)
+    csv_reports = pd.DataFrame(data=reports, columns=cols)
+    
+    return csv_reports
+
 
 def adjust_learning_rate(optimizer, epoch, args):
     if args.optimizer == 'SGD' or args.optimizer == 'Adam':
@@ -144,7 +171,8 @@ def train(train_list, test_list, model, creterion, args, writer):
     for epoch_i in tqdm(range(1, args.epoch+1)):
         model.train()
         adjust_learning_rate(optimizer, epoch_i, args)
-        for music, dance, label, metadata in loader:
+        # for music, dance, label, metadata in loader:
+        for dance, label, metadata in loader:
             # get input
             input = Variable(dance.cuda(), requires_grad=False)
             label = Variable(label.cuda(), requires_grad=False)
@@ -169,15 +197,22 @@ def train(train_list, test_list, model, creterion, args, writer):
             
         total_acc = running_acc/updates
         total_loss = running_loss/updates
-        writer.add_scalar('train/accuracy', total_acc, updates)
-        writer.add_scalar('train/loss', total_loss, updates)
+        if writer is not None:
+            writer.add_scalar('train/accuracy', total_acc, updates)
+            writer.add_scalar('train/loss', total_loss, updates)
         # print('loss=', total_loss, 'acc=', total_acc, 'iterations=', updates, 'epoch=', epoch_i)
         
         if epoch_i % args.save_per_epochs == 0 and args.save_model:
             save_checkpoint(model, epoch_i, args)
         
         if epoch_i % args.eval_per_epochs == 0:
-            evaluate(test_list, model, epoch_i, creterion, args, writer)
+            error_num, predict_label, gt_label = evaluate(test_list, model, epoch_i, creterion, args, writer)
+
+    if args.save_reports:
+        reports = get_evaluation_reports(predict_label, gt_label)
+        reports.to_csv(os.path.join(args.output_dir, 'reports_{}.csv'.format(args.train_dir.rsplit('/',1)[1])))
+
+    return error_num
 
 def evaluate(test_list, model, epoch, creterion, args, writer):
     model.eval()
@@ -185,10 +220,14 @@ def evaluate(test_list, model, epoch, creterion, args, writer):
     running_loss = 0
     running_acc = 0
     num_batches = 0
+    error_num = 0
+    preds = None
+    gts = None
 
     loader = load_data(test_list, 'test', args)
 
-    for music, dance, label, metadata in loader:
+    # for music, dance, label, metadata in loader:
+    for dance, label, metadata in loader:
         with torch.no_grad():
             # get input
             input = Variable(
@@ -206,12 +245,23 @@ def evaluate(test_list, model, epoch, creterion, args, writer):
             running_acc += get_accuracy(output, label)
             running_loss += loss.detach().item()
             num_batches += 1
-        
+            value, predict_label = torch.max(output.data, 1)
+            error_num += torch.sum((predict_label == label.data).int()).item()
+            if preds is None:
+                preds = [item for item in predict_label]
+                gts = [item for item in label.data]
+            else:
+                preds += [item for item in predict_label]
+                gts += [item for item in label.data]
+      
     total_acc = running_acc/num_batches
     total_loss = running_loss/num_batches
-    writer.add_scalar('test/accuracy', total_acc, epoch)
-    writer.add_scalar('test/loss', total_loss, epoch)
-    return total_acc
+    if writer is not None:
+        writer.add_scalar('test/accuracy', total_acc, epoch)
+        writer.add_scalar('test/loss', total_loss, epoch)
+    
+    print(error_num)
+    return error_num, preds, gts
 
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
@@ -225,25 +275,27 @@ def main():
     """ Main function """
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--train_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_discarded/bcurve', 
+    parser.add_argument('--train_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_05discard_notwins/bcurve_gaussian', 
                         help='the directory of training data')
-    parser.add_argument('--test_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_discarded/bcurve',
+    parser.add_argument('--test_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_05discard_notwins/bcurve_gaussian',
                         help='the directory of testing data')
-    parser.add_argument('--data_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_discarded/bcurve',
+    parser.add_argument('--data_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_05discard_notwins/bcurve_gaussian',
                         help='the directory of all data')
-    parser.add_argument('--output_dir', metavar='PATH', default='checkpoints')
+    parser.add_argument('--output_dir', metavar='PATH', default='/home/dingxi/DanceAGCN/output')
 
     parser.add_argument('--num_worker', type=int, default=16, help='the number of worker for DataLoader')
     parser.add_argument('--run_tensorboard', type=str2bool, default=True, help='Use tensorboard or not')
     parser.add_argument('--save_model', type=str2bool, default=False, help='Save model or not')
+    parser.add_argument('--save_reports', type=str2bool, default=True, help='Save prediction reports or not')
     parser.add_argument('--kfold_validation', type=str2bool, default=True, help='Do k-fold validation or not')
     parser.add_argument('--k_in_kfold', type=int, default=5)
+    parser.add_argument('--gpu_id', type=list, default=[0, 1])
 
     parser.add_argument('--use_bezier', type=str2bool, default=False, help='Use Bezier curve to smooth or not')
     
     # optimizer
-    parser.add_argument('--epoch', type=int, default=50)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--epoch', type=int, default=25)
+    parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--save_per_epochs', type=int, metavar='N', default=5)
     parser.add_argument('--eval_per_epochs', type=int, default=5)
     parser.add_argument('--optimizer', default='SGD', help='type of optimizer')
@@ -258,28 +310,45 @@ def main():
     device = torch.device('cuda')
     
     # Prepare K-fold data generator
-    kfold = kfold_split(args.train_dir, args.k_in_kfold, shuffle=True)
+    kfold = kfold_split(args.data_dir, args.k_in_kfold, shuffle=True)
+    total_acc = 0
 
     for i in range(args.k_in_kfold):
-        print('*'*10, '{} in {}-fold test'.format(i+1, args.k_in_kfold), '*'*10)
 
         # Create AGCN
-        net = nn.DataParallel(new_aagcn(), device_ids=[0,1]).to(device)
+        net = nn.DataParallel(new_aagcn(), device_ids=args.gpu_id).to(device)
+        # net = nn.DataParallel(new_aagcn(), device_ids=[0,1]).to(device)
 
         # Define loss function
         creterion = nn.CrossEntropyLoss().to(device)
 
         # Set up Tensorboard
-        writer = SummaryWriter()
+        if args.run_tensorboard:
+            writer = SummaryWriter()
+        else:
+            writer = None
 
         # Prepare file lists for training and testing
-        train_list, test_list = next(kfold)
+        # train_list = [item for item in os.listdir('/home/dingxi/DanceRevolution/data/train_1min') if item not in ['pop_1min_0054_00_0.json','pop_1min_0054_00_1.json']]
+        # test_list = [item for item in os.listdir('/home/dingxi/DanceRevolution/data/test_1min') if item not in ['pop_1min_0054_00_0.json','pop_1min_0054_00_1.json']]
+
+        if args.kfold_validation:
+            print('*'*10, '{} in {}-fold test'.format(i+1, args.k_in_kfold), '*'*10)
+            train_list, test_list = next(kfold)
+        else:
+            train_list = os.listdir(args.train_dir)
+            test_list = os.listdir(args.test_dir)
 
         # Training
-        train(train_list, test_list, net, creterion, args, writer)
+        error_num = train(train_list, test_list, net, creterion, args, writer)
+
+        # Add accuracy numbers up
+        total_acc += float(error_num/len(test_list))
 
         if not args.kfold_validation:
             break
+    
+    print("TOTAL ACC:", total_acc/args.k_in_kfold)
 
 if __name__ == '__main__':
    main()

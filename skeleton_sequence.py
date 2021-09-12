@@ -887,7 +887,9 @@ class SkeletonSequence:
         squeeze_subplots(fig)
 
         if all_frames:
-            n_frames = self._data.shape[1] if xyz is None else xyz.shape[1]
+            # TODO: DX changed here:
+            # n_frames = self._data.shape[1] if xyz is None else xyz.shape[1]
+            n_frames = self._data.shape[1] if xyz is None else xyz[0].shape[1]
             offset = 0
         else:
             n_frames, offset = self.get_actual_n_frames(body=body)
@@ -1216,7 +1218,7 @@ class SkeletonSequence:
             set_3d_axis_limits(ax)
 
         ax.set_xlabel('X')
-        assert not flip_z, 'Why is flip_z=True?'
+        # assert not flip_z, 'Why is flip_z=True?'
 
         if self.is_2d:
             ax.set_ylabel('Y')
