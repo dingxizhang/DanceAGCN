@@ -11,10 +11,10 @@ from tqdm.auto import tqdm
 # For bcurve, run discard_frames.py -> Done
 # For linear, run discard_frames.py -> interpolate_missing_keypoints.py -> myprepro.py -> Done
 parser = argparse.ArgumentParser()
-parser.add_argument('--input_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_notwins_01sigma')
+parser.add_argument('--input_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_01sigma')
 # parser.add_argument('--json_dir', type=str, default='/home/dingxi/DanceRevolution/data/json')
-parser.add_argument('--output_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_notwins_01sigma_03discard')
-parser.add_argument('--discard_ratio', type=float, default=0.3)
+parser.add_argument('--output_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_01sigma_nodiscard')
+parser.add_argument('--discard_ratio', type=float, default=0)
 args = parser.parse_args()
 
 if not os.path.exists(args.output_dir):
@@ -33,7 +33,7 @@ def get_missing_frames_idx(sequence, args):
     # load dance array of the sequence
     with open(os.path.join(args.input_dir, sequence)) as f:
         raw_dict = json.loads(f.read())
-        dance = raw_dict['dance_array'] # dance is a list with shape 900(frames)*274(keypoints)
+        dance = raw_dict['dance_array'] # dance is a list with shape 1900(frames)*274(keypoints)
     
     seq_len = len(dance)
     missing_idx = sorted(random.sample(list(range(0, seq_len)), int(seq_len*args.discard_ratio)))
@@ -52,7 +52,7 @@ def parser_seq_name(sequence):
 
 def discard_frames(sequence, frames_list, method, args):
     # This function manipulates preprocessed json files
-    assert method in ['bcurve', 'linear'], 'Choose what method is it for'
+    assert method in ['bcurve', 'linear', 'interpolate']
 
     with open(os.path.join(args.input_dir, sequence)) as f:
         raw_dict = json.loads(f.read())

@@ -21,7 +21,7 @@ def add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.1):
         with open(file_path, 'r') as f:
             raw = json.loads(f.read())
         
-        dance = np.array(raw['dance_array']).reshape(-1, 25, 2)
+        dance = np.array(raw['dance_array'])[:, :50].reshape(-1, 25, 2)
         for i in range(len(dance)):
             for j in range(len(dance[0])):
                 if dance[i][j][0] == -1 and dance[i][j][1] == -1:
@@ -72,5 +72,5 @@ def add_gaussian_for_linear(input_dir, output_dir, mu=0, sigma=0.1):
 
 if __name__ == '__main__':
     input_dir = '/home/dingxi/DanceRevolution/data/all_1min_notwins'
-    output_dir = '/home/dingxi/DanceRevolution/data/all_015sigma'
-    add_gaussian_for_bcurve(input_dir, output_dir, sigma=0.15)
+    output_dir = '/home/dingxi/DanceRevolution/data/all_01sigma'
+    add_gaussian_for_bcurve(input_dir, output_dir, sigma=0.1)
