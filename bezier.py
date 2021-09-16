@@ -296,7 +296,7 @@ class BezierFitter:
 
         # last_window_points = None
         save_idx = [] if save_idx is None else save_idx
-
+        
         for i, idx in enumerate(windows):
             if i == n_windows - 1 and idx[-1] != trajectory_length - 1:
                 idx = np.arange(idx[0], trajectory_length, 1)

@@ -14,14 +14,20 @@ import sys
 sys.path.append('../DanceRevolution')
 sys.path.append('../DanceRevolution/v2')
 from agcn.graph.dance_revolution import DanceRevolutionGraph
+from agcn.graph.aistplusplus import AISTplusplusGraph
 from agcn.model.aagcn import Model
 from dataset_holder import DanceRevolutionHolder
 from dataset import DanceRevolutionDataset
 import pandas as pd
 
 
-def new_aagcn(num_classes=3):
-    graph = DanceRevolutionGraph(labeling_mode='spatial')
+def new_aagcn(args):
+    if args.source == 'dancerevolution':
+        num_classes = 3
+        graph = DanceRevolutionGraph(labeling_mode='spatial')
+    elif args.source == 'aist++':
+        num_classes = 10
+        graph = AISTplusplusGraph(labeling_mode='spatial')
     model = Model(num_class=num_classes, num_point=graph.num_node, in_channels=2, graph=graph)
     return model
 
@@ -49,7 +55,7 @@ def run_batch(input_tensor, model):
 def kfold_split(data_dir, n_splits=5, shuffle=True):
     fnames = sorted(os.listdir(data_dir))
     if shuffle:
-        random.Random(4).shuffle(fnames)
+        random.Random(1).shuffle(fnames)
     num_per_split = int(len(fnames)/n_splits)
     print('total number:', len(fnames), 'num per split:', num_per_split)
     for i in range(n_splits):
@@ -62,23 +68,24 @@ def load_data(file_list, split, args):
     # DanceRevolutionDataset is a subclass of torch.utils.data.Dataset which loads sequences stored in Holder
     # Dataloader loads data from Dataset and output requested sequences
     print('{} data loading'.format(split))
+    seq_length = 1800 if args.source == 'dancerevolution' else 2878
     if split == 'train':
-        holder = DanceRevolutionHolder(args.train_dir, split, file_list, train_interval=1800)
+        holder = DanceRevolutionHolder(args.train_dir, split, source=args.source, file_list=file_list, train_interval=seq_length)
         if args.use_bezier:
-            dataset = DanceRevolutionDataset(holder, 'bcurve+gaussian', bez_degree=5)
+            dataset = DanceRevolutionDataset(holder, 'bcurve', bez_degree=5)
         else:
-            dataset = DanceRevolutionDataset(holder, 'raw+gaussian')
+            dataset = DanceRevolutionDataset(holder, 'raw')
         loader = DataLoader(dataset,
                             batch_size=args.batch_size,
                             shuffle=True,
                             num_workers=args.num_worker,
                             drop_last=True)
     elif split == 'test':
-        holder = DanceRevolutionHolder(args.test_dir, split, file_list, train_interval=1800)
+        holder = DanceRevolutionHolder(args.test_dir, split, source=args.source, file_list=file_list, train_interval=seq_length)
         if args.use_bezier:
-            dataset = DanceRevolutionDataset(holder, 'bcurve+gaussian', bez_degree=5)
+            dataset = DanceRevolutionDataset(holder, 'bcurve', bez_degree=5)
         else:
-            dataset = DanceRevolutionDataset(holder, 'raw+gaussian')
+            dataset = DanceRevolutionDataset(holder, 'raw')
         loader = DataLoader(dataset,
                             batch_size=args.batch_size,
                             shuffle=True,
@@ -171,6 +178,9 @@ def train(train_list, test_list, model, creterion, args, writer):
     for epoch_i in tqdm(range(1, args.epoch+1)):
         model.train()
         adjust_learning_rate(optimizer, epoch_i, args)
+        print(optimizer.param_groups[0]['lr'])
+        # optimizer = load_optimizer(args.optimizer, model.parameters(), lr)
+
         # for music, dance, label, metadata in loader:
         for dance, label, metadata in loader:
             # get input
@@ -207,6 +217,7 @@ def train(train_list, test_list, model, creterion, args, writer):
         
         if epoch_i % args.eval_per_epochs == 0:
             error_num, predict_label, gt_label = evaluate(test_list, model, epoch_i, creterion, args, writer)
+            get_evaluation_reports(predict_label, gt_label)
 
     if args.save_reports:
         reports = get_evaluation_reports(predict_label, gt_label)
@@ -274,17 +285,18 @@ def str2bool(v):
 def main():
     """ Main function """
     parser = argparse.ArgumentParser()
-
-    parser.add_argument('--train_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_05discard_notwins/bcurve_gaussian', 
+    default_path = '/home/dingxi/DanceRevolution/data/all_notwins_01sigma_03discard/bcurve'
+    parser.add_argument('--train_dir', type=str, default=default_path, 
                         help='the directory of training data')
-    parser.add_argument('--test_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_05discard_notwins/bcurve_gaussian',
+    parser.add_argument('--test_dir', type=str, default=default_path,
                         help='the directory of testing data')
-    parser.add_argument('--data_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_1min_05discard_notwins/bcurve_gaussian',
+    parser.add_argument('--data_dir', type=str, default=default_path,
                         help='the directory of all data')
+    parser.add_argument('--source', type=str, default='dancerevolution')
     parser.add_argument('--output_dir', metavar='PATH', default='/home/dingxi/DanceAGCN/output')
 
     parser.add_argument('--num_worker', type=int, default=16, help='the number of worker for DataLoader')
-    parser.add_argument('--run_tensorboard', type=str2bool, default=True, help='Use tensorboard or not')
+    parser.add_argument('--run_tensorboard', type=str2bool, default=False, help='Use tensorboard or not')
     parser.add_argument('--save_model', type=str2bool, default=False, help='Save model or not')
     parser.add_argument('--save_reports', type=str2bool, default=True, help='Save prediction reports or not')
     parser.add_argument('--kfold_validation', type=str2bool, default=True, help='Do k-fold validation or not')
@@ -294,13 +306,13 @@ def main():
     parser.add_argument('--use_bezier', type=str2bool, default=False, help='Use Bezier curve to smooth or not')
     
     # optimizer
-    parser.add_argument('--epoch', type=int, default=25)
+    parser.add_argument('--epoch', type=int, default=20)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--save_per_epochs', type=int, metavar='N', default=5)
     parser.add_argument('--eval_per_epochs', type=int, default=5)
     parser.add_argument('--optimizer', default='SGD', help='type of optimizer')
-    parser.add_argument('--base_lr', type=float, default=0.01, help='initial learning rate')
-    parser.add_argument('--step', type=int, default=[10, 30, 50], nargs='+',
+    parser.add_argument('--base_lr', type=float, default=0.001, help='initial learning rate')
+    parser.add_argument('--step', type=int, default=[10], nargs='+',
                         help='the epoch where optimizer reduce the learning rate')
     parser.add_argument('--warm_up_epoch', default=0)
 
@@ -316,8 +328,7 @@ def main():
     for i in range(args.k_in_kfold):
 
         # Create AGCN
-        net = nn.DataParallel(new_aagcn(), device_ids=args.gpu_id).to(device)
-        # net = nn.DataParallel(new_aagcn(), device_ids=[0,1]).to(device)
+        net = nn.DataParallel(new_aagcn(args=args), device_ids=[int(item) for item in args.gpu_id]).to(device)
 
         # Define loss function
         creterion = nn.CrossEntropyLoss().to(device)
@@ -329,8 +340,8 @@ def main():
             writer = None
 
         # Prepare file lists for training and testing
-        # train_list = [item for item in os.listdir('/home/dingxi/DanceRevolution/data/train_1min') if item not in ['pop_1min_0054_00_0.json','pop_1min_0054_00_1.json']]
-        # test_list = [item for item in os.listdir('/home/dingxi/DanceRevolution/data/test_1min') if item not in ['pop_1min_0054_00_0.json','pop_1min_0054_00_1.json']]
+        # train_list = [item for item in os.listdir('/home/dingxi/DanceRevolution/data_origin/data/train_1min') if item not in ['pop_1min_0054_00_0.json','pop_1min_0054_00_1.json']]
+        # test_list = [item for item in os.listdir('/home/dingxi/DanceRevolution/data_origin/data/test_1min') if item not in ['pop_1min_0054_00_0.json','pop_1min_0054_00_1.json']]
 
         if args.kfold_validation:
             print('*'*10, '{} in {}-fold test'.format(i+1, args.k_in_kfold), '*'*10)
@@ -348,7 +359,7 @@ def main():
         if not args.kfold_validation:
             break
     
-    print("TOTAL ACC:", total_acc/args.k_in_kfold)
+    print("TOTAL ACC:", total_acc/args.k_in_kfold if args.kfold_validation else total_acc)
 
 if __name__ == '__main__':
    main()

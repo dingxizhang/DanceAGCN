@@ -4,6 +4,7 @@ import numpy as np
 import os
 import sys
 import json
+import pickle
 import random
 sys.path.append('/home/dingxi/DanceRevolution')
 sys.path.append('/home/dingxi/DanceRevolution/v2')
@@ -14,14 +15,21 @@ from skeleton_structure import DanceRevolutionStructure
 
 
 class DanceRevolutionHolder:
-    def __init__(self, data_path, split, file_list=None, gaussian_sigma=None, train_interval=1800, music_feat_dim=438, linear_inter=False):
+    def __init__(self, data_path, split, source, file_list=None, train_interval=1800, music_feat_dim=438):
         assert split in ('train', 'test'), 'Split must be either `train` or `test`'
+        assert source in ('dancerevolution', 'aist++'), 'Source must be either `dancerevolution` or `aist++`'
         
         if file_list is None:
             file_list = sorted(os.listdir(data_path))
 
-        music, dance, self.filenames = self.load_data(file_list, data_path, split, interval=train_interval, return_fnames=True,
-                                                    linear_inter=linear_inter)
+        if source == 'dancerevolution':
+            music, dance, self.filenames = self.load_data(file_list, data_path, split, interval=train_interval, return_fnames=True)
+            self.n_nodes = 25
+            self.labels_str_to_int = {'ballet': 0, 'hiphop': 1, 'pop': 2}
+        elif source == 'aist++':
+            music, dance, self.filenames = self.load_aist_data(file_list, data_path, split, interval=train_interval, return_fnames=True)
+            self.n_nodes = 17
+            self.labels_str_to_int = {'gBR': 0, 'gPO': 1, 'gLO': 2, 'gMH':3, 'gLH': 4, 'gHO':5, 'gWA':6, 'gKR':7, 'gJS':8, 'gJB':9}
         
         # if split == 'train':
         #     music, dance, self.filenames = load_data(file_list, data_path, 'train', interval=train_interval, return_fnames=True)
@@ -36,7 +44,6 @@ class DanceRevolutionHolder:
         self.n_samples = len(music)
         self.seq_length = dance[0].shape[0]
         self.skel_dim = 2  # xy coordinates
-        self.n_nodes = 25
         self.n_bodies = 1  # for convenience it's best to add this extra dimension
         self.music_feat_dim = music_feat_dim
         self.skeletons = []
@@ -50,12 +57,11 @@ class DanceRevolutionHolder:
         # we create mp arrays so that these can be shared across processes safely, i.e. we can share only one copy of
         # the data across pytorch data loader workers
         dance_mp_array = mp.Array(ctypes.c_float, int(np.prod(self.dance_array_shape)))
-        music_mp_array = mp.Array(ctypes.c_float, int(np.prod(self.music_array_shape)))
+        # music_mp_array = mp.Array(ctypes.c_float, int(np.prod(self.music_array_shape)))
 
         self.dance_array = np.ctypeslib.as_array(dance_mp_array.get_obj()).reshape(self.dance_array_shape)
-        self.music_array = np.ctypeslib.as_array(music_mp_array.get_obj()).reshape(self.music_array_shape)
-
-        self.labels_str_to_int = {'ballet': 0, 'hiphop': 1, 'pop': 2}
+        # self.music_array = np.ctypeslib.as_array(music_mp_array.get_obj()).reshape(self.music_array_shape)
+        
         self.labels_int_to_str = {v: k for k, v in self.labels_str_to_int.items()}
         self.metadata = [self.get_metadata_from_filename(fn, i) for i, fn in enumerate(self.filenames)]
 
@@ -88,8 +94,9 @@ class DanceRevolutionHolder:
     def parse_dance_sequence(x, scale_input=False, w=None, h=None, add_body_dim=True):
         if scale_input:
             assert w is not None and h is not None
+        dim = int(x.shape[1]/2)
 
-        x = x.reshape(-1, 25, 2)
+        x = x.reshape(-1, dim, 2)
         x = x.transpose((2, 0, 1))
 
         if add_body_dim:
@@ -102,7 +109,7 @@ class DanceRevolutionHolder:
 
         return x
 
-    def load_data(self, file_list, data_dir, split, interval=100, data_type='2D', return_fnames=False, linear_inter=False):
+    def load_data(self, file_list, data_dir, split, interval=100, data_type='2D', return_fnames=False):
     # DX: Given a file_list and data_dir, output two lists music_data (contains music features) 
     # and dance_data (contains skeleton sequences with fixed interval)
 
@@ -115,9 +122,6 @@ class DanceRevolutionHolder:
                 sample_dict = json.loads(f.read())
                 np_music = np.array(sample_dict['music_array'])
                 np_dance = np.array(sample_dict['dance_array'])
-                
-                if linear_inter:
-                    np_dance = sample_dict['music_array'] = self.get_linear_interpolated_skeleton(sample_dict['music_array'])
                 
                 if data_type == '2D':
                     # Only use 25 keypoints skeleton (basic bone) for 2D
@@ -148,86 +152,22 @@ class DanceRevolutionHolder:
         else:
             return music_data, dance_data
 
-    @staticmethod
-    def interpolate(frames, stride=10):
-        """ 
-        this code is from interplate_missing_keyjoints.py in DanceRevolution repo
+    def load_aist_data(self, file_list, data_dir, split, interval=100, data_type='2D', return_fnames=False):
+        music_data, dance_data = [], []
+        fnames = file_list
+        # fnames = fnames[:10]  # For debug
+        for fname in fnames:
+            path = os.path.join(data_dir, fname)
+            with open(path, 'rb') as f:
+                np_dance = pickle.load(f)
+            music_data.append([])
+            dance_data.append(np_dance)
         
-        frames: a list of pose_points and the length of the list is sequence length
-        which means each 'pose_points' stands for 25 keypoints in one frame
-        """
+        if return_fnames:
+            return music_data, dance_data, fnames
+        else:
+            return music_data, dance_data
 
-        for i in range(len(frames)):
-            # DX: the shape of pose_points is (25, 3) 25 is the number of nodes
-            # and for each node we have (x, y, confidence) which counts 3
-            pose_points = frames[i]
-
-            for j, point in enumerate(pose_points):
-                if point[0] == -1 and point[1] == -1:
-                    k1 = i
-                    # DX: k1 is used to locate left (on a time axis) most boundary given a stride
-                    while k1 > i - stride and k1 >= 0:
-                        tmp_point = frames[k1][j]
-                        if tmp_point[0] != -1 or tmp_point[1] != -1:
-                            break # DX: stop moving if hits frame 0 or limited by stride
-                        k1 -= 1
-
-                    k2 = i
-                    # DX: is the right most boundary
-                    while k2 < i + stride and k2 <= len(frames) - 1:
-                        tmp_point = frames[k2][j]
-                        if tmp_point[0] != -1 or tmp_point[1] != -1:
-                            break
-                        k2 += 1
-
-                    # DX: The strategy of linear interpolation is like this:
-                    # if both left and right points exist, use the average of them
-                    # if one of left (right) point doesn't exist, use right (left) point
-                    if k1 == -1 and k2 < i + stride:
-                        target_right_point = frames[k2][j]
-                        point[0] = target_right_point[0]
-                        point[1] = target_right_point[1]
-                        point[2] = target_right_point[2]
-                    if k1 > i - stride and k2 == len(frames):
-                        target_left_point = frames[k1][j]
-                        point[0] = target_left_point[0]
-                        point[1] = target_left_point[1]
-                        point[2] = target_left_point[2]
-
-                    if (k1 > i - stride and k1 >= 0) and (k2 < i + stride and k2 <= len(frames) - 1):
-                        target_left_point = frames[k1][j]
-                        target_right_point = frames[k2][j]
-                        point[0] = (target_left_point[0] + target_right_point[0]) / 2
-                        point[1] = (target_left_point[1] + target_right_point[1]) / 2
-                        point[2] = (target_left_point[2] + target_right_point[2]) / 2
-
-                    if (k1 > i - stride and k1 >= 0) and (k2 == i + stride and k2 <= len(frames) - 1):
-                        target_left_point = frames[k1][j]
-                        point[0] = target_left_point[0]
-                        point[1] = target_left_point[1]
-                        point[2] = target_left_point[2]
-
-                    if (k1 == i - stride and k1 >= 0) and (k2 < i + stride and k2 <= len(frames) - 1):
-                        target_right_point = frames[k2][j]
-                        point[0] = target_right_point[0]
-                        point[1] = target_right_point[1]
-                        point[2] = target_right_point[2]
-
-                    # print('interpolate')
-        return frames
-    
-    @staticmethod
-    def get_linear_interpolated_skeleton(dance_array):
-        # first convert array to put into interpolate function
-        np_dance = np.array(dance_array) # shape is (1800, 274)
-        # our target is a list with length 1800, and each element is a array with shape (25, 2)
-        np_dance = np_dance[:, :50]
-        dance = np_dance.reshape(np_dance.shape[0], 25, 2).tolist()
-        # linearly interpolate
-        result = DanceRevolutionHolder.interpolate(dance)
-        # convert list back to the shape (1800, 50)
-        result = np.array(result).reshape(1800, 50)
-        return result
 
 if __name__ == '__main__':
     # train_holder = DanceRevolutionHolder('/home/davide/data/datasets/dance_revolution/data/train_1min', 'train')

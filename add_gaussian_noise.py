@@ -5,13 +5,11 @@ import numpy as np
 from tqdm.auto import tqdm
 
 def add_gaussian_noise(x, mu=0, sigma=0.1):
-    for i in range(len(x)):
-        for j in range(len(x[0])):
-            x[i][j] += random.gauss(mu, sigma)*x[i][j]
+    x += random.gauss(mu, sigma)*x
     return x
 
 def add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.1):
-    
+    # DX: this function is to add Gaussian noise to preprocessed json files   
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
     
@@ -22,8 +20,17 @@ def add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.1):
         # read raw data
         with open(file_path, 'r') as f:
             raw = json.loads(f.read())
-        dance = raw['dance_array']
-        raw['dance_array'] = add_gaussian_noise(dance, mu, sigma)
+        
+        dance = np.array(raw['dance_array']).reshape(-1, 25, 2)
+        for i in range(len(dance)):
+            for j in range(len(dance[0])):
+                if dance[i][j][0] == -1 and dance[i][j][1] == -1:
+                    continue
+                else:
+                    dance[i][j][0] = add_gaussian_noise(dance[i][j][0], mu, sigma)
+                    dance[i][j][1] = add_gaussian_noise(dance[i][j][1], mu, sigma)
+        
+        raw['dance_array'] = dance.reshape(-1, 50).tolist()
         output_path = os.path.join(output_dir, file)
         
         # dump jittered data
@@ -31,6 +38,7 @@ def add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.1):
             json.dump(raw, f)
 
 def add_gaussian_for_linear(input_dir, output_dir, mu=0, sigma=0.1):
+    # DX: this function is to add Gaussian noise to raw json files
     for music_dir in ['ballet_1min', 'hiphop_1min', 'pop_1min']:
         print(music_dir)
         music_path = os.path.join(input_dir, music_dir)
@@ -63,7 +71,6 @@ def add_gaussian_for_linear(input_dir, output_dir, mu=0, sigma=0.1):
                     
 
 if __name__ == '__main__':
-    input_dir = '/home/dingxi/DanceRevolution/data/all_1min_05discard_notwins/linear'
-    output_dir = '/home/dingxi/DanceRevolution/data/all_1min_05discard_notwins/linear_gaussian'
-    # add_gaussian_for_bcurve(input_dir, output_dir)
-    add_gaussian_for_linear(input_dir, output_dir)
+    input_dir = '/home/dingxi/DanceRevolution/data/all_1min_notwins'
+    output_dir = '/home/dingxi/DanceRevolution/data/all_015sigma'
+    add_gaussian_for_bcurve(input_dir, output_dir, sigma=0.15)
