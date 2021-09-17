@@ -41,7 +41,7 @@ class DanceRevolutionHolder:
         self.data_path = data_path
         self.split = split
         self.train_interval = train_interval
-        self.n_samples = len(music)
+        self.n_samples = len(dance)
         self.seq_length = dance[0].shape[0]
         self.skel_dim = 2  # xy coordinates
         self.n_bodies = 1  # for convenience it's best to add this extra dimension

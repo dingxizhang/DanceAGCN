@@ -272,7 +272,7 @@ class BezierFitter:
         This function returns both the control points and the joint curve. See other functions for the output shapes
         """
         trajectory_length = points_matrix.shape[time_axis]
-        assert trajectory_length == len(frames_list), f'Trajectory length {target_length} did not match frames list ' \
+        assert trajectory_length == len(frames_list), f'Trajectory length {trajectory_length} did not match frames list ' \
                                                       f'length {len(frames_list)}'
         assert 0 <= overlap <= 1 or overlap % 2 == 0, 'Overlap must be either 0, 1 or multiple of 2'
 

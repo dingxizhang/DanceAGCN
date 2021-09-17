@@ -11,10 +11,10 @@ from tqdm.auto import tqdm
 # For bcurve, run discard_frames.py -> Done
 # For linear, run discard_frames.py -> interpolate_missing_keypoints.py -> myprepro.py -> Done
 parser = argparse.ArgumentParser()
-parser.add_argument('--input_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_01sigma')
+parser.add_argument('--input_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_04sigma')
 # parser.add_argument('--json_dir', type=str, default='/home/dingxi/DanceRevolution/data/json')
-parser.add_argument('--output_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_01sigma_nodiscard')
-parser.add_argument('--discard_ratio', type=float, default=0)
+parser.add_argument('--output_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_04sigma_09discard')
+parser.add_argument('--discard_ratio', type=float, default=0.9)
 args = parser.parse_args()
 
 if not os.path.exists(args.output_dir):

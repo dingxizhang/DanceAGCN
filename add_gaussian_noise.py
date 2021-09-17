@@ -5,7 +5,8 @@ import numpy as np
 from tqdm.auto import tqdm
 
 def add_gaussian_noise(x, mu=0, sigma=0.1):
-    x += random.gauss(mu, sigma)*x
+    # x += random.gauss(mu, sigma)*x
+    x = random.gauss(mu, sigma)
     return x
 
 def add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.1):
@@ -72,5 +73,5 @@ def add_gaussian_for_linear(input_dir, output_dir, mu=0, sigma=0.1):
 
 if __name__ == '__main__':
     input_dir = '/home/dingxi/DanceRevolution/data/all_1min_notwins'
-    output_dir = '/home/dingxi/DanceRevolution/data/all_01sigma'
-    add_gaussian_for_bcurve(input_dir, output_dir, sigma=0.1)
+    output_dir = '/home/dingxi/DanceRevolution/data/all_noise'
+    add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.7)

@@ -862,7 +862,7 @@ class SkeletonSequence:
         def set_ax_lims(ax):
             if ax_limits is not None and self.is_2d:
                 ax.set_xlim(left=ax_limits[0], right=ax_limits[1])
-                ax.set_ylim(top=ax_limits[2], bottom=ax_limits[3])
+                ax.set_ylim(top=ax_limits[3], bottom=ax_limits[2])
 
         def create_ax():
             ax = fig.add_subplot(nrows, ncols, i + 1, projection=None if self.is_2d else '3d')

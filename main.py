@@ -48,10 +48,6 @@ def run_batch(input_tensor, model):
 
     return output
 
-# TODO: create a PyTorch dataset object feeding DanceRevolution's skeleton data in the expected format.
-#  Look at attached notebook to understand Dance Revolution dance format. Look also at dataset_holder.py to see how
-#  data can be loaded first and then fed via a Dataset object. I'm including a stub object in dataset.py for your
-#  reference
 def kfold_split(data_dir, n_splits=5, shuffle=True):
     fnames = sorted(os.listdir(data_dir))
     if shuffle:
@@ -67,34 +63,19 @@ def load_data(file_list, split, args):
     # DanceRevolutionHolder transforms a sequence of raw json files into a SkeletonSequence class and store them
     # DanceRevolutionDataset is a subclass of torch.utils.data.Dataset which loads sequences stored in Holder
     # Dataloader loads data from Dataset and output requested sequences
-    print('{} data loading'.format(split))
+    
     seq_length = 1800 if args.source == 'dancerevolution' else 2878
-    if split == 'train':
-        holder = DanceRevolutionHolder(args.train_dir, split, source=args.source, file_list=file_list, train_interval=seq_length)
-        if args.use_bezier:
-            dataset = DanceRevolutionDataset(holder, 'bcurve', bez_degree=5)
-        else:
-            dataset = DanceRevolutionDataset(holder, 'raw')
-        loader = DataLoader(dataset,
-                            batch_size=args.batch_size,
-                            shuffle=True,
-                            num_workers=args.num_worker,
-                            drop_last=True)
-    elif split == 'test':
-        holder = DanceRevolutionHolder(args.test_dir, split, source=args.source, file_list=file_list, train_interval=seq_length)
-        if args.use_bezier:
-            dataset = DanceRevolutionDataset(holder, 'bcurve', bez_degree=5)
-        else:
-            dataset = DanceRevolutionDataset(holder, 'raw')
-        loader = DataLoader(dataset,
-                            batch_size=args.batch_size,
-                            shuffle=True,
-                            num_workers=args.num_worker,
-                            drop_last=False)
-    else:
-        raise ValueError()
+    path = args.train_dir if split == 'train' else args.test_dir
+    data_in = 'bcurve' if args.use_bezier else 'raw'
+    drop_last = True if split == 'train' else False
 
-    print('{} data loaded'.format(split))
+    holder = DanceRevolutionHolder(path, split, source=args.source, file_list=file_list, train_interval=seq_length)
+    dataset = DanceRevolutionDataset(holder, data_in, bez_degree=args.bez_degree, window=args.bez_window)
+    loader = DataLoader(dataset,
+                        batch_size=args.batch_size,
+                        shuffle=True,
+                        num_workers=args.num_worker,
+                        drop_last=drop_last)
     return loader
 
 def load_optimizer(opt_name, params, base_lr):
@@ -116,6 +97,11 @@ def load_optimizer(opt_name, params, base_lr):
 def get_accuracy(output, label):
     value, predict_label = torch.max(output.data, 1)
     return torch.mean((predict_label == label.data).float()).item()
+
+def get_bad_cases_fnames(metadata, predict_label, gt_label):
+    bad_cases_idx = [i for i, item in enumerate(predict_label == gt_label) if item == False]
+    bad_cases_fnames = [metadata['uid'][i] for i in bad_cases_idx]
+    return bad_cases_fnames
 
 def get_evaluation_reports(preds, gts):
     labels_str_to_int = {'ballet': 0, 'hiphop': 1, 'pop': 2}
@@ -141,7 +127,6 @@ def get_evaluation_reports(preds, gts):
     csv_reports = pd.DataFrame(data=reports, columns=cols)
     
     return csv_reports
-
 
 def adjust_learning_rate(optimizer, epoch, args):
     if args.optimizer == 'SGD' or args.optimizer == 'Adam':
@@ -178,10 +163,8 @@ def train(train_list, test_list, model, creterion, args, writer):
     for epoch_i in tqdm(range(1, args.epoch+1)):
         model.train()
         adjust_learning_rate(optimizer, epoch_i, args)
-        print(optimizer.param_groups[0]['lr'])
-        # optimizer = load_optimizer(args.optimizer, model.parameters(), lr)
+        # print(optimizer.param_groups[0]['lr'])
 
-        # for music, dance, label, metadata in loader:
         for dance, label, metadata in loader:
             # get input
             input = Variable(dance.cuda(), requires_grad=False)
@@ -216,10 +199,11 @@ def train(train_list, test_list, model, creterion, args, writer):
             save_checkpoint(model, epoch_i, args)
         
         if epoch_i % args.eval_per_epochs == 0:
-            error_num, predict_label, gt_label = evaluate(test_list, model, epoch_i, creterion, args, writer)
+            error_num, predict_label, gt_label, bad_cases = evaluate(test_list, model, epoch_i, creterion, args, writer)
             get_evaluation_reports(predict_label, gt_label)
 
     if args.save_reports:
+        print(bad_cases)
         reports = get_evaluation_reports(predict_label, gt_label)
         reports.to_csv(os.path.join(args.output_dir, 'reports_{}.csv'.format(args.train_dir.rsplit('/',1)[1])))
 
@@ -228,6 +212,7 @@ def train(train_list, test_list, model, creterion, args, writer):
 def evaluate(test_list, model, epoch, creterion, args, writer):
     model.eval()
 
+    bad_cases = set()
     running_loss = 0
     running_acc = 0
     num_batches = 0
@@ -264,6 +249,9 @@ def evaluate(test_list, model, epoch, creterion, args, writer):
             else:
                 preds += [item for item in predict_label]
                 gts += [item for item in label.data]
+
+            # get file names of bad cases
+            bad_cases.update(get_bad_cases_fnames(metadata, predict_label, label.data))
       
     total_acc = running_acc/num_batches
     total_loss = running_loss/num_batches
@@ -272,7 +260,7 @@ def evaluate(test_list, model, epoch, creterion, args, writer):
         writer.add_scalar('test/loss', total_loss, epoch)
     
     print(error_num)
-    return error_num, preds, gts
+    return error_num, preds, gts, bad_cases
 
 def str2bool(v):
     if v.lower() in ('yes', 'true', 't', 'y', '1'):
@@ -285,7 +273,7 @@ def str2bool(v):
 def main():
     """ Main function """
     parser = argparse.ArgumentParser()
-    default_path = '/home/dingxi/DanceRevolution/data/all_notwins_01sigma_03discard/bcurve'
+    default_path = '/home/dingxi/DanceRevolution/data/all_noise'
     parser.add_argument('--train_dir', type=str, default=default_path, 
                         help='the directory of training data')
     parser.add_argument('--test_dir', type=str, default=default_path,
@@ -304,6 +292,8 @@ def main():
     parser.add_argument('--gpu_id', type=list, default=[0, 1])
 
     parser.add_argument('--use_bezier', type=str2bool, default=False, help='Use Bezier curve to smooth or not')
+    parser.add_argument('--bez_degree', type=int, default=5)
+    parser.add_argument('--bez_window', type=int, default=10)
     
     # optimizer
     parser.add_argument('--epoch', type=int, default=20)
