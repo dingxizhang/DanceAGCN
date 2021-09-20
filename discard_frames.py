@@ -1,6 +1,7 @@
 import os
 import json
 import random
+import pickle
 import argparse
 import numpy as np
 from tqdm.auto import tqdm
@@ -11,10 +12,11 @@ from tqdm.auto import tqdm
 # For bcurve, run discard_frames.py -> Done
 # For linear, run discard_frames.py -> interpolate_missing_keypoints.py -> myprepro.py -> Done
 parser = argparse.ArgumentParser()
-parser.add_argument('--input_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_04sigma')
+parser.add_argument('--input_dir', type=str, default='/home/dingxi/AIST++/03sigma')
 # parser.add_argument('--json_dir', type=str, default='/home/dingxi/DanceRevolution/data/json')
-parser.add_argument('--output_dir', type=str, default='/home/dingxi/DanceRevolution/data/all_04sigma_09discard')
-parser.add_argument('--discard_ratio', type=float, default=0.9)
+parser.add_argument('--output_dir', type=str, default='/home/dingxi/AIST++/03sigma_05discard')
+parser.add_argument('--discard_ratio', type=float, default=0.5)
+parser.add_argument('--source', type=str, default='aist++')
 args = parser.parse_args()
 
 if not os.path.exists(args.output_dir):
@@ -31,51 +33,56 @@ if not os.path.exists(os.path.join(args.output_dir, 'frames_list')):
 
 def get_missing_frames_idx(sequence, args):
     # load dance array of the sequence
-    with open(os.path.join(args.input_dir, sequence)) as f:
-        raw_dict = json.loads(f.read())
-        dance = raw_dict['dance_array'] # dance is a list with shape 1900(frames)*274(keypoints)
+    dance, _ = load_dance(os.path.join(args.input_dir, sequence), args)
     
     seq_len = len(dance)
     missing_idx = sorted(random.sample(list(range(0, seq_len)), int(seq_len*args.discard_ratio)))
     
     # output missing frames list to npy files
     kept_frames = [item for item in range(0, seq_len) if item not in missing_idx]
-    np.save(os.path.join(args.output_dir, 'frames_list', sequence.replace('.json', '.npy')), np.array(kept_frames))
+    np.save(os.path.join(args.output_dir, 'frames_list', sequence.split('.', 1)[0]+'.npy'), np.array(kept_frames))
 
     return missing_idx
-
-def parser_seq_name(sequence):
-    info = sequence.strip('.json').split('_')
-    dir_name = info[0] + '_1min'
-    pose_name = info[2] + '_' + info[3]
-    return dir_name, pose_name
 
 def discard_frames(sequence, frames_list, method, args):
     # This function manipulates preprocessed json files
     assert method in ['bcurve', 'linear', 'interpolate']
+    dance, raw_dict = load_dance(os.path.join(args.input_dir, sequence), args)
 
-    with open(os.path.join(args.input_dir, sequence)) as f:
-        raw_dict = json.loads(f.read())
-        dance = raw_dict['dance_array'] # dance is a list with shape 1800(frames)*274(keypoints)
-        if method == 'bcurve':
-            new_dance = drop_frames(dance, frames_list, args)
-        elif method == 'linear':
-            new_dance = modify_frames(dance, frames_list, args)
-        elif method == 'interpolate':
-            new_dance = interpolate(dance)
+    if method == 'bcurve':
+        new_dance = drop_frames(dance, frames_list, args)
+    elif method == 'linear':
+        new_dance = modify_frames(dance, frames_list, args)
+    elif method == 'interpolate':
+        new_dance = interpolate(dance)
     
     # dump results into json files
     if method == 'bcurve':
         output_path = os.path.join(args.output_dir, 'bcurve', sequence)
     elif method == 'linear':
         output_path = os.path.join(args.output_dir, 'linear', sequence)
+    
+    if args.source == 'dancerevolution':
+        with open(output_path, 'w') as f:
+            new_dict = raw_dict.copy()
+            new_dict['dance_array'] = new_dance
+            json.dump(new_dict, f)
+    elif args.source == 'aist++':
+        with open(output_path, 'wb') as f:
+            pickle.dump(np.array(new_dance), f)
 
-    with open(output_path, 'w') as f:
-        new_dict = raw_dict.copy()
-        new_dict['dance_array'] = new_dance
-        json.dump(new_dict, f)
+def load_dance(path, args):
+    if args.source == 'dancerevolution':
+        with open(path) as f:
+            raw_dict = json.loads(f.read())
+            dance = raw_dict['dance_array'] # dance is a list with shape 1900(frames)*274(keypoints)
+        return dance, raw_dict
     
-    
+    elif args.source == 'aist++':
+        with open(path, 'rb') as f:
+            dance = pickle.load(f)
+        return dance.tolist(), None
+
 def drop_frames(dance, frames_list, args):
     bcurve = dance.copy()
     # Discard target frames listed in missing_idx
@@ -92,16 +99,16 @@ def modify_frames(dance, frames_list, args):
         linear[idx] = [-1]*len(linear[idx])
     
     # Use linear method to interpolate
-    result = interpolate(linear)
+    result = interpolate(linear, args)
     
     return result
 
-def interpolate(frames, stride=10):
-    
+def interpolate(frames, args, stride=10):
     frames = np.array(frames)
-    frames = frames[:, :50]
+    num_node = 25 if args.source == 'dancerevolution' else 17
+    frames = frames[:, :num_node*2]
     shape = frames.shape # shape should be (1800, 50)
-    frames = frames.reshape(shape[0], 25, 2)
+    frames = frames.reshape(shape[0], num_node, 2)
     for i in range(len(frames)):
         # DX: the shape of pose_points is (25, 2) 25 is the number of nodes
         # and for each node we have (x, y)
@@ -153,7 +160,7 @@ def interpolate(frames, stride=10):
                     point[0] = target_right_point[0]
                     point[1] = target_right_point[1]
     
-    result = frames.reshape(shape[0], 50).tolist()
+    result = frames.reshape(shape[0], num_node*2).tolist()
     return result
 
 def discard_frames_linear_raw_json(sequence, frames_list, args):
@@ -179,7 +186,11 @@ def discard_frames_linear_raw_json(sequence, frames_list, args):
         with open(os.path.join(dump_path, json_file), 'w') as f:
             json.dump(linear_dict, f)
 
-
+def parser_seq_name(sequence):
+    info = sequence.strip('.json').split('_')
+    dir_name = info[0] + '_1min'
+    pose_name = info[2] + '_' + info[3]
+    return dir_name, pose_name
         
 if __name__ == '__main__':
     sequences = os.listdir(args.input_dir)

@@ -515,7 +515,8 @@ class SkeletonSequence:
                   bounds=None):
         assert not (interpolation_points is not None and target_length is not None), \
             'Specify target_length or interpolation_points, but not both'
-        nodes = self.get_nodes(body, frame='all_actual', normalise=normalise)
+        # DX: modified here to stop removing zero keypoints
+        nodes = self.get_nodes(body, frame='all', normalise=normalise)
         outliers = None
 
         if self.is_2d:

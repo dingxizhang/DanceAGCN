@@ -46,11 +46,11 @@ class DanceDataset(torch.utils.data.Dataset):
         
         elif self.data_in.split('+',1)[0] == 'bcurve':
             # frames_list_path = skel_sequence.metadata['filename'].replace('.json', '.npy')
-            frames_list_path = skel_sequence.metadata['filename'].replace('.json', '.npy').replace('_gaussian', '')
-            frames_list_path = self.holder.data_path.rsplit('/', 1)[0]+ '/frames_list/' + frames_list_path
+            frames_list_path = skel_sequence.metadata['filename'].split('.',1)[0]+'.npy'
+            frames_list_path = self.holder.data_path.rsplit('/', 1)[0] + '/frames_list/' + frames_list_path
             frames_list = np.load(frames_list_path).tolist()
             b, _, outliers= skel_sequence.get_bezier_skeleton(order=self.bez_degree, body=0, window=self.window, overlap=4, target_length=None,
-                                                    frames_list=frames_list, bounds=(0, 1799))
+                                                    frames_list=frames_list, bounds=(0, 2877))
             return b.astype('<f4')
         else:
             raise ValueError(f'Cannot deal with this data input: {self.data_in}')

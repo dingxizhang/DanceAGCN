@@ -34,9 +34,9 @@ def new_aagcn(args):
 
 def run_batch(input_tensor, model):
     # DM: this is just an example to show how the data has to be passed to the model
-    B, C, T, V, M = input_tensor.shape
+    N, C, T, V, M = input_tensor.shape
     # input shape:
-    # B: batch size,
+    # N: batch size,
     # C=2 (xy channels),
     # T: length of sequence (n. of frames),
     # V=25, number of nodes in the skeleton,
@@ -103,8 +103,12 @@ def get_bad_cases_fnames(metadata, predict_label, gt_label):
     bad_cases_fnames = [metadata['uid'][i] for i in bad_cases_idx]
     return bad_cases_fnames
 
-def get_evaluation_reports(preds, gts):
-    labels_str_to_int = {'ballet': 0, 'hiphop': 1, 'pop': 2}
+def get_evaluation_reports(preds, gts, args):
+    if args.source == 'dancerevolution':
+        labels_str_to_int = {'ballet': 0, 'hiphop': 1, 'pop': 2}
+    elif args.source == 'aist++':
+        labels_str_to_int = {'gBR': 0, 'gPO': 1, 'gLO': 2, 'gMH':3, 'gLH': 4, 'gHO':5, 'gWA':6, 'gKR':7, 'gJS':8, 'gJB':9}
+    
     labels_int_to_str = {v: k for k, v in labels_str_to_int.items()}
     
     reports = []
@@ -200,11 +204,11 @@ def train(train_list, test_list, model, creterion, args, writer):
         
         if epoch_i % args.eval_per_epochs == 0:
             error_num, predict_label, gt_label, bad_cases = evaluate(test_list, model, epoch_i, creterion, args, writer)
-            get_evaluation_reports(predict_label, gt_label)
+            # get_evaluation_reports(predict_label, gt_label, args)
 
     if args.save_reports:
         print(bad_cases)
-        reports = get_evaluation_reports(predict_label, gt_label)
+        reports = get_evaluation_reports(predict_label, gt_label, args)
         reports.to_csv(os.path.join(args.output_dir, 'reports_{}.csv'.format(args.train_dir.rsplit('/',1)[1])))
 
     return error_num
@@ -273,14 +277,14 @@ def str2bool(v):
 def main():
     """ Main function """
     parser = argparse.ArgumentParser()
-    default_path = '/home/dingxi/DanceRevolution/data/all_noise'
+    default_path = '/home/dingxi/AIST++/03sigma_05discard/bcurve'
     parser.add_argument('--train_dir', type=str, default=default_path, 
                         help='the directory of training data')
     parser.add_argument('--test_dir', type=str, default=default_path,
                         help='the directory of testing data')
     parser.add_argument('--data_dir', type=str, default=default_path,
                         help='the directory of all data')
-    parser.add_argument('--source', type=str, default='dancerevolution')
+    parser.add_argument('--source', type=str, default='aist++')
     parser.add_argument('--output_dir', metavar='PATH', default='/home/dingxi/DanceAGCN/output')
 
     parser.add_argument('--num_worker', type=int, default=16, help='the number of worker for DataLoader')
@@ -296,13 +300,13 @@ def main():
     parser.add_argument('--bez_window', type=int, default=10)
     
     # optimizer
-    parser.add_argument('--epoch', type=int, default=20)
+    parser.add_argument('--epoch', type=int, default=30)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--save_per_epochs', type=int, metavar='N', default=5)
     parser.add_argument('--eval_per_epochs', type=int, default=5)
     parser.add_argument('--optimizer', default='SGD', help='type of optimizer')
-    parser.add_argument('--base_lr', type=float, default=0.001, help='initial learning rate')
-    parser.add_argument('--step', type=int, default=[10], nargs='+',
+    parser.add_argument('--base_lr', type=float, default=0.01, help='initial learning rate')
+    parser.add_argument('--step', type=int, default=[10, 20], nargs='+',
                         help='the epoch where optimizer reduce the learning rate')
     parser.add_argument('--warm_up_epoch', default=0)
 

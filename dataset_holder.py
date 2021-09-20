@@ -10,7 +10,7 @@ sys.path.append('/home/dingxi/DanceRevolution')
 sys.path.append('/home/dingxi/DanceRevolution/v2')
 from bezier import BezierFitter
 from skeleton_sequence import SkeletonSequence
-from skeleton_structure import DanceRevolutionStructure
+from skeleton_structure import DanceRevolutionStructure, AISTplusplusStructure
 # from utils.functional import load_data, load_test_data  # DM these are functions from dance revolution code
 
 
@@ -26,10 +26,12 @@ class DanceRevolutionHolder:
             music, dance, self.filenames = self.load_data(file_list, data_path, split, interval=train_interval, return_fnames=True)
             self.n_nodes = 25
             self.labels_str_to_int = {'ballet': 0, 'hiphop': 1, 'pop': 2}
+            self.skeleton_structure = DanceRevolutionStructure()  # this define the edges of the skeleton
         elif source == 'aist++':
             music, dance, self.filenames = self.load_aist_data(file_list, data_path, split, interval=train_interval, return_fnames=True)
             self.n_nodes = 17
             self.labels_str_to_int = {'gBR': 0, 'gPO': 1, 'gLO': 2, 'gMH':3, 'gLH': 4, 'gHO':5, 'gWA':6, 'gKR':7, 'gJS':8, 'gJB':9}
+            self.skeleton_structure = AISTplusplusStructure()  # this define the edges of the skeleton
         
         # if split == 'train':
         #     music, dance, self.filenames = load_data(file_list, data_path, 'train', interval=train_interval, return_fnames=True)
@@ -52,7 +54,6 @@ class DanceRevolutionHolder:
         self.music_array_shape = (self.n_samples, self.music_feat_dim, self.seq_length)
 
         self.bezier_fitter = BezierFitter()
-        self.skeleton_structure = DanceRevolutionStructure()  # this define the edges of the skeleton
 
         # we create mp arrays so that these can be shared across processes safely, i.e. we can share only one copy of
         # the data across pytorch data loader workers
@@ -155,7 +156,6 @@ class DanceRevolutionHolder:
     def load_aist_data(self, file_list, data_dir, split, interval=100, data_type='2D', return_fnames=False):
         music_data, dance_data = [], []
         fnames = file_list
-        # fnames = fnames[:10]  # For debug
         for fname in fnames:
             path = os.path.join(data_dir, fname)
             with open(path, 'rb') as f:

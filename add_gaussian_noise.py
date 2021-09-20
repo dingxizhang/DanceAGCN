@@ -1,15 +1,15 @@
 import os
 import json
 import random
+import pickle
 import numpy as np
 from tqdm.auto import tqdm
 
 def add_gaussian_noise(x, mu=0, sigma=0.1):
-    # x += random.gauss(mu, sigma)*x
-    x = random.gauss(mu, sigma)
+    x += random.gauss(mu, sigma)*x
     return x
 
-def add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.1):
+def add_gaussian_for_bcurve(input_dir, output_dir, src, mu=0, sigma=0.1):
     # DX: this function is to add Gaussian noise to preprocessed json files   
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
@@ -19,10 +19,16 @@ def add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.1):
         file_path = os.path.join(input_dir, file)
         
         # read raw data
-        with open(file_path, 'r') as f:
-            raw = json.loads(f.read())
+        if src == 'dancerevolution':
+            with open(file_path, 'r') as f:
+                raw = json.loads(f.read())
+            dance = np.array(raw['dance_array'])[:, :50].reshape(-1, 25, 2)
         
-        dance = np.array(raw['dance_array'])[:, :50].reshape(-1, 25, 2)
+        elif src == 'aist++':
+            with open(file_path, 'rb') as f:
+                dance = pickle.load(f)
+            dance = dance[:, :34].reshape(-1, 17, 2)
+
         for i in range(len(dance)):
             for j in range(len(dance[0])):
                 if dance[i][j][0] == -1 and dance[i][j][1] == -1:
@@ -31,12 +37,17 @@ def add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.1):
                     dance[i][j][0] = add_gaussian_noise(dance[i][j][0], mu, sigma)
                     dance[i][j][1] = add_gaussian_noise(dance[i][j][1], mu, sigma)
         
-        raw['dance_array'] = dance.reshape(-1, 50).tolist()
         output_path = os.path.join(output_dir, file)
         
         # dump jittered data
-        with open(output_path, 'w') as f:
-            json.dump(raw, f)
+        if src == 'dancerevolution':
+            raw['dance_array'] = dance.reshape(-1, 50).tolist()
+            with open(output_path, 'w') as f:
+                json.dump(raw, f)
+        elif src == 'aist++':
+            dance = dance.reshape(-1, 34)
+            with open(output_path, 'wb') as f:
+                pickle.dump(dance, f)
 
 def add_gaussian_for_linear(input_dir, output_dir, mu=0, sigma=0.1):
     # DX: this function is to add Gaussian noise to raw json files
@@ -72,6 +83,6 @@ def add_gaussian_for_linear(input_dir, output_dir, mu=0, sigma=0.1):
                     
 
 if __name__ == '__main__':
-    input_dir = '/home/dingxi/DanceRevolution/data/all_1min_notwins'
-    output_dir = '/home/dingxi/DanceRevolution/data/all_noise'
-    add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.7)
+    input_dir = '/home/dingxi/AIST++/converted'
+    output_dir = '/home/dingxi/AIST++/03sigma'
+    add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.3, src='aist++')
