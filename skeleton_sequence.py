@@ -538,7 +538,7 @@ class SkeletonSequence:
             b, _, cp, outliers = self.fitter.fit_bezier_series_with_windows(to_fit, order, window, overlap,
                                                                             target_length=target_length,
                                                                             inter_points=interpolation_points,
-                                                                            outliers_neigh=outliers_neigh,
+                                                                            # outliers_neigh=outliers_neigh,
                                                                             save_idx=save_idx, frames_list=frames_list,
                                                                             bounds=bounds)
         else:

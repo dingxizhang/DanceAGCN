@@ -1,12 +1,15 @@
+import warnings
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from scipy.special import comb as n_over_k
-from sklearn.neighbors import LocalOutlierFactor
 
 from plots import squeeze_subplots
+# from utilities import find_outliers
+
+
 # DM: the fitting algorithm was adapted from https://stackoverflow.com/a/62225617
-# from utils import get_box_from_keypoints, normalise_keypoints_
 
 
 class BezierFitter:
@@ -185,7 +188,10 @@ class BezierFitter:
         if key in self.windows:
             return self.windows[key]
 
-        windows = torch.arange(0, trajectory_length).unfold(0, sliding_w, sliding_w - w_overlap)
+        if trajectory_length > sliding_w:
+            windows = torch.arange(0, trajectory_length).unfold(0, sliding_w, sliding_w - w_overlap)
+        else:
+            windows = torch.arange(0, trajectory_length).unsqueeze(0)
 
         if not pytorch:
             windows = windows.numpy()
@@ -265,14 +271,15 @@ class BezierFitter:
         return cp
 
     def fit_bezier_series_with_windows(self, points_matrix, degree, window, overlap, time_axis=1, nodes_axis=2,
-                                       inter_points=None, target_length=None, outliers_neigh=None,
-                                       save_idx=None, frames_list=None, bounds=None):
+                                       inter_points=None, target_length=None, out_window=None, out_thr=0.1,
+                                       save_idx=None, frames_list=None, bounds=None,
+                                       not_enough_points_policy='err'):
         """
         Expects array of shape (channels, frames, nodes)
         This function returns both the control points and the joint curve. See other functions for the output shapes
         """
         trajectory_length = points_matrix.shape[time_axis]
-        assert trajectory_length == len(frames_list), f'Trajectory length {trajectory_length} did not match frames list ' \
+        assert trajectory_length == len(frames_list), f'Trajectory length {target_length} did not match frames list ' \
                                                       f'length {len(frames_list)}'
         assert 0 <= overlap <= 1 or overlap % 2 == 0, 'Overlap must be either 0, 1 or multiple of 2'
 
@@ -284,8 +291,14 @@ class BezierFitter:
             'Review this to work with target length or interpolation points'
 
         if trajectory_length < degree + 1:
-            raise RuntimeError(f'There must be at least {degree + 1} points to determine the parameters of a '
-                               f'degree {degree} curve. Got only {trajectory_length} points.')
+            if not_enough_points_policy == 'warn':
+                warnings.warn(f'There must be at least {degree + 1} points to determine the parameters of a '
+                              f'degree {degree} curve. Got only {trajectory_length} points. '
+                              f'Returning the input sequence')
+                return points_matrix, [], [], []
+            else:
+                raise RuntimeError(f'There must be at least {degree + 1} points to determine the parameters of a '
+                                   f'degree {degree} curve. Got only {trajectory_length} points.')
 
         windows = self.get_windows(window, overlap, trajectory_length)
         t_overlap = self.get_overlap_t_points(overlap) if overlap > 0 else 0
@@ -296,14 +309,14 @@ class BezierFitter:
 
         # last_window_points = None
         save_idx = [] if save_idx is None else save_idx
-        
+
         for i, idx in enumerate(windows):
             if i == n_windows - 1 and idx[-1] != trajectory_length - 1:
                 idx = np.arange(idx[0], trajectory_length, 1)
                 # last_window_points = target_length - (i * inter_points)
 
-            if outliers_neigh is not None:
-                outliers = BezierFitter.find_outliers(points_matrix, idx, save_idx, outliers_neigh)
+            if out_window is not None:
+                outliers = find_outliers(points_matrix, idx, save_idx, out_window, outlier_thr=out_thr)
                 idx = [k for k in idx if k not in outliers]
 
                 for o in outliers:
@@ -363,26 +376,6 @@ class BezierFitter:
         outliers_all = sorted(outliers_all)
 
         return final_curve, gs, cps, outliers_all
-
-    @staticmethod
-    def find_outliers(points_matrix, idx, save_idx, outliers_neigh, normalise_kpt=True):
-        if normalise_kpt:
-            temp = []  # shape of points_matrix is CTV
-            for i in idx:
-                keypoints_t = points_matrix[:, i, :].T  # transpose to reuse methods below
-                box = get_box_from_keypoints(keypoints_t, box_border=0)
-                keypoints_t = normalise_keypoints_(box, keypoints_t)
-                temp.append(keypoints_t.T)
-
-            xy = np.stack(temp, axis=1)
-        else:
-            xy = points_matrix[:, idx, :]
-
-        xy = xy.transpose(1, 2, 0).reshape(-1, xy.shape[0] * xy.shape[2])
-        outliers = LocalOutlierFactor(n_neighbors=outliers_neigh).fit_predict(xy)
-        outliers = [idx[j] for j, o in enumerate(outliers) if o == -1 and idx[j] not in save_idx]
-
-        return outliers
 
     def get_bezier_curves(self, control_points, degree, inter_points=100, points_axis=0, dtype=np.float32,
                           zero_if_no_cp=True):
