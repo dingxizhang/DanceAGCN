@@ -25,10 +25,10 @@ class DanceDataset(torch.utils.data.Dataset):
         metadata = skel_seq.metadata
         label = metadata['label']
         dance = self.get_dance_data(skel_seq)
-        # DX: Modified _data member here just for visualization
-        skel_seq._data = dance
 
         if self.for_animation:
+            # DX: Modified _data member here just for visualization
+            skel_seq._data = dance
             return dance, label, metadata, skel_seq
         
         return dance, label, metadata
@@ -36,10 +36,6 @@ class DanceDataset(torch.utils.data.Dataset):
     def get_dance_data(self, skel_sequence):
         if self.data_in == 'raw':
             return skel_sequence.get_raw_data(as_is=True)
-        
-        elif self.data_in == 'linear':
-            b = skel_sequence.get_linear_interpolated_skeleton()
-            return b
         
         elif self.data_in == 'raw+bcurve':
             return skel_sequence.get_raw_plus_bcurve_data(self.bez_degree, padding_size=self.holder.seq_length)
@@ -49,8 +45,11 @@ class DanceDataset(torch.utils.data.Dataset):
             frames_list_path = skel_sequence.metadata['filename'].split('.',1)[0]+'.npy'
             frames_list_path = self.holder.data_path.rsplit('/', 1)[0] + '/frames_list/' + frames_list_path
             frames_list = np.load(frames_list_path).tolist()
+            
+            target_length = 1800 if self.holder.source == 'dancerevolution' else 2878
+            
             b, _, outliers= skel_sequence.get_bezier_skeleton(order=self.bez_degree, body=0, window=self.window, overlap=4, target_length=None,
-                                                    frames_list=frames_list, bounds=(0, 2877))
+                                                    frames_list=frames_list, bounds=(0, target_length-1))
             return b.astype('<f4')
         else:
             raise ValueError(f'Cannot deal with this data input: {self.data_in}')

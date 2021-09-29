@@ -1202,7 +1202,7 @@ class SkeletonSequence:
 
     def plot_xyz(self, xyz, normalise=False, init_view_h=45, init_view_v=20, ax=None, highlight_node=None,
                  plot_only_highlighted=False, set_axis_lim=True, joint_size=2, flip_z=False, zdir='z',
-                 invert_2d_ax=False):
+                 invert_2d_ax=True):
         if ax is None:
             if self.is_2d:
                 fig, ax = plt.subplots(nrows=1, ncols=1, dpi=150)

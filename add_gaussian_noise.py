@@ -84,5 +84,5 @@ def add_gaussian_for_linear(input_dir, output_dir, mu=0, sigma=0.1):
 
 if __name__ == '__main__':
     input_dir = '/home/dingxi/AIST++/converted'
-    output_dir = '/home/dingxi/AIST++/03sigma'
-    add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.3, src='aist++')
+    output_dir = '/home/dingxi/AIST++/02sigma'
+    add_gaussian_for_bcurve(input_dir, output_dir, mu=0, sigma=0.2, src='aist++')

@@ -156,7 +156,6 @@ def save_checkpoint(model, epoch_i, args):
 
 def train(train_list, test_list, model, creterion, args, writer):
     updates = 0
-    loss_value = []
     optimizer = load_optimizer(args.optimizer, model.parameters(), args.base_lr)
     loader = load_data(train_list, 'train', args)
     
@@ -277,13 +276,11 @@ def str2bool(v):
 def main():
     """ Main function """
     parser = argparse.ArgumentParser()
-    default_path = '/home/dingxi/AIST++/03sigma_05discard/bcurve'
+    default_path = '/home/dingxi/AIST++/03discard/bcurve'
     parser.add_argument('--train_dir', type=str, default=default_path, 
                         help='the directory of training data')
     parser.add_argument('--test_dir', type=str, default=default_path,
                         help='the directory of testing data')
-    parser.add_argument('--data_dir', type=str, default=default_path,
-                        help='the directory of all data')
     parser.add_argument('--source', type=str, default='aist++')
     parser.add_argument('--output_dir', metavar='PATH', default='/home/dingxi/DanceAGCN/output')
 
@@ -300,13 +297,13 @@ def main():
     parser.add_argument('--bez_window', type=int, default=10)
     
     # optimizer
-    parser.add_argument('--epoch', type=int, default=30)
+    parser.add_argument('--epoch', type=int, default=50)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--save_per_epochs', type=int, metavar='N', default=5)
     parser.add_argument('--eval_per_epochs', type=int, default=5)
     parser.add_argument('--optimizer', default='SGD', help='type of optimizer')
     parser.add_argument('--base_lr', type=float, default=0.01, help='initial learning rate')
-    parser.add_argument('--step', type=int, default=[10, 20], nargs='+',
+    parser.add_argument('--step', type=int, default=[100], nargs='+',
                         help='the epoch where optimizer reduce the learning rate')
     parser.add_argument('--warm_up_epoch', default=0)
 
@@ -316,7 +313,7 @@ def main():
     device = torch.device('cuda')
     
     # Prepare K-fold data generator
-    kfold = kfold_split(args.data_dir, args.k_in_kfold, shuffle=True)
+    kfold = kfold_split(args.train_dir, args.k_in_kfold, shuffle=True)
     total_acc = 0
 
     for i in range(args.k_in_kfold):
@@ -328,10 +325,7 @@ def main():
         creterion = nn.CrossEntropyLoss().to(device)
 
         # Set up Tensorboard
-        if args.run_tensorboard:
-            writer = SummaryWriter()
-        else:
-            writer = None
+        writer = SummaryWriter() if args.run_tensorboard else None
 
         # Prepare file lists for training and testing
         # train_list = [item for item in os.listdir('/home/dingxi/DanceRevolution/data_origin/data/train_1min') if item not in ['pop_1min_0054_00_0.json','pop_1min_0054_00_1.json']]
@@ -345,10 +339,10 @@ def main():
             test_list = os.listdir(args.test_dir)
 
         # Training
-        error_num = train(train_list, test_list, net, creterion, args, writer)
+        correct_num = train(train_list, test_list, net, creterion, args, writer)
 
         # Add accuracy numbers up
-        total_acc += float(error_num/len(test_list))
+        total_acc += float(correct_num/len(test_list))
 
         if not args.kfold_validation:
             break

@@ -40,6 +40,7 @@ class DanceRevolutionHolder:
 
         assert len(music) == len(dance), 'music/dance sequence mismatch'
 
+        self.source = source
         self.data_path = data_path
         self.split = split
         self.train_interval = train_interval
@@ -68,7 +69,7 @@ class DanceRevolutionHolder:
 
         for i, (m, d) in enumerate(zip(music, dance)):
             # DX:
-            assert d.shape[0] == self.seq_length, 'Sequence length mismatch'
+            # assert d.shape[0] == self.seq_length, 'Sequence length mismatch, {} not equals to {}'.format(d.shape[0], self.seq_length)
             # assert m.shape[0] == self.seq_length and d.shape[0] == self.seq_length, 'Sequence length mismatch'
             s = self.parse_dance_sequence(d)
             self.dance_array[i] = s
